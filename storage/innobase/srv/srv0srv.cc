@@ -285,6 +285,9 @@ srv_stats_t	srv_stats;
 /* structure to pass status variables to MySQL */
 export_var_t export_vars;
 
+singleton_counter_array<size_t, static_cast<size_t>(counters_t::SIZE)>
+    counter_array;
+
 /** Normally 0. When nonzero, skip some phases of crash recovery,
 starting from SRV_FORCE_IGNORE_CORRUPT, so that data can be recovered
 by SELECT or mysqldump. When this is nonzero, we do not allow any user
@@ -756,10 +759,10 @@ static void srv_refresh_innodb_monitor_stats(time_t current_time)
 
 	buf_refresh_io_stats();
 
-	srv_n_rows_inserted_old = srv_stats.n_rows_inserted;
-	srv_n_rows_updated_old = srv_stats.n_rows_updated;
-	srv_n_rows_deleted_old = srv_stats.n_rows_deleted;
-	srv_n_rows_read_old = srv_stats.n_rows_read;
+	srv_n_rows_inserted_old = COUNTER_LOAD(N_ROWS_INSERTED);
+	srv_n_rows_updated_old = COUNTER_LOAD(N_ROWS_UPDATED);
+	srv_n_rows_deleted_old = COUNTER_LOAD(N_ROWS_DELETED);
+	srv_n_rows_read_old = COUNTER_LOAD(N_ROWS_READ);
 
 	srv_n_system_rows_inserted_old = srv_stats.n_system_rows_inserted;
 	srv_n_system_rows_updated_old = srv_stats.n_system_rows_updated;
@@ -943,33 +946,28 @@ srv_printf_innodb_monitor(
 		srv_main_thread_id,
 		srv_main_thread_op_info);
 	fprintf(file,
-		"Number of rows inserted " ULINTPF
-		", updated " ULINTPF
-		", deleted " ULINTPF
-		", read " ULINTPF "\n",
-		(ulint) srv_stats.n_rows_inserted,
-		(ulint) srv_stats.n_rows_updated,
-		(ulint) srv_stats.n_rows_deleted,
-		(ulint) srv_stats.n_rows_read);
+		"Number of rows inserted %zu, updated %zu, deleted %zu, read "
+		"%zu\n",
+		COUNTER_LOAD(N_ROWS_INSERTED), COUNTER_LOAD(N_ROWS_UPDATED),
+		COUNTER_LOAD(N_ROWS_DELETED), COUNTER_LOAD(N_ROWS_READ));
 	fprintf(file,
 		"%.2f inserts/s, %.2f updates/s,"
 		" %.2f deletes/s, %.2f reads/s\n",
-		static_cast<double>(srv_stats.n_rows_inserted
+		static_cast<double>(COUNTER_LOAD(N_ROWS_INSERTED)
 				    - srv_n_rows_inserted_old)
 		/ time_elapsed,
-		static_cast<double>(srv_stats.n_rows_updated
+		static_cast<double>(COUNTER_LOAD(N_ROWS_UPDATED)
 				    - srv_n_rows_updated_old)
 		/ time_elapsed,
-		static_cast<double>(srv_stats.n_rows_deleted
+		static_cast<double>(COUNTER_LOAD(N_ROWS_DELETED)
 				    - srv_n_rows_deleted_old)
 		/ time_elapsed,
-		static_cast<double>(srv_stats.n_rows_read
+		static_cast<double>(COUNTER_LOAD(N_ROWS_READ)
 				    - srv_n_rows_read_old)
 		/ time_elapsed);
 	fprintf(file,
-		"Number of system rows inserted " ULINTPF
-		", updated " ULINTPF ", deleted " ULINTPF
-		", read " ULINTPF "\n",
+		"Number of system rows inserted %zu, updated %zu, deleted "
+		"%zu, read %zu\n",
 		(ulint) srv_stats.n_system_rows_inserted,
 		(ulint) srv_stats.n_system_rows_updated,
 		(ulint) srv_stats.n_system_rows_deleted,
@@ -989,10 +987,10 @@ srv_printf_innodb_monitor(
 		static_cast<double>(srv_stats.n_system_rows_read
 				    - srv_n_system_rows_read_old)
 		/ time_elapsed);
-	srv_n_rows_inserted_old = srv_stats.n_rows_inserted;
-	srv_n_rows_updated_old = srv_stats.n_rows_updated;
-	srv_n_rows_deleted_old = srv_stats.n_rows_deleted;
-	srv_n_rows_read_old = srv_stats.n_rows_read;
+	srv_n_rows_inserted_old = COUNTER_LOAD(N_ROWS_INSERTED);
+	srv_n_rows_updated_old = COUNTER_LOAD(N_ROWS_UPDATED);
+	srv_n_rows_deleted_old = COUNTER_LOAD(N_ROWS_DELETED);
+	srv_n_rows_read_old = COUNTER_LOAD(N_ROWS_READ);
 	srv_n_system_rows_inserted_old = srv_stats.n_system_rows_inserted;
 	srv_n_system_rows_updated_old = srv_stats.n_system_rows_updated;
 	srv_n_system_rows_deleted_old = srv_stats.n_system_rows_deleted;
@@ -1070,7 +1068,7 @@ srv_export_innodb_status(void)
 	export_vars.innodb_data_written = srv_stats.data_written + dblwr;
 
 	export_vars.innodb_buffer_pool_read_requests
-		= buf_pool.stat.n_page_gets;
+		= COUNTER_LOAD(N_PAGE_GETS);
 
 	export_vars.innodb_buffer_pool_write_requests =
 		srv_stats.buf_pool_write_requests;
@@ -1166,13 +1164,13 @@ srv_export_innodb_status(void)
 	export_vars.innodb_row_lock_time_max =
 		lock_sys.n_lock_max_wait_time / 1000;
 
-	export_vars.innodb_rows_read = srv_stats.n_rows_read;
+	export_vars.innodb_rows_read = COUNTER_LOAD(N_ROWS_READ);
 
-	export_vars.innodb_rows_inserted = srv_stats.n_rows_inserted;
+	export_vars.innodb_rows_inserted = COUNTER_LOAD(N_ROWS_INSERTED);
 
-	export_vars.innodb_rows_updated = srv_stats.n_rows_updated;
+	export_vars.innodb_rows_updated = COUNTER_LOAD(N_ROWS_UPDATED);
 
-	export_vars.innodb_rows_deleted = srv_stats.n_rows_deleted;
+	export_vars.innodb_rows_deleted = COUNTER_LOAD(N_ROWS_DELETED);
 
 	export_vars.innodb_system_rows_read = srv_stats.n_system_rows_read;
 

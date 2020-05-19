@@ -48,8 +48,19 @@ Created 10/10/1995 Heikki Tuuri
 
 #include "mysql/psi/mysql_stage.h"
 #include "mysql/psi/psi.h"
+#include "distributable_counter.h"
 #include <tpool.h>
 #include <memory>
+
+enum class counters_t : size_t
+{
+  N_ROWS_READ,
+  N_ROWS_UPDATED,
+  N_ROWS_DELETED,
+  N_ROWS_INSERTED,
+  N_PAGE_GETS,
+  SIZE,
+};
 
 /** Global counters used inside InnoDB. */
 struct srv_stats_t
@@ -131,18 +142,6 @@ struct srv_stats_t
 	/** Number of threads currently waiting on database locks */
 	MY_ALIGNED(CACHE_LINE_SIZE) Atomic_counter<ulint>
 				n_lock_wait_current_count;
-
-	/** Number of rows read. */
-	ulint_ctr_64_t		n_rows_read;
-
-	/** Number of rows updated */
-	ulint_ctr_64_t		n_rows_updated;
-
-	/** Number of rows deleted */
-	ulint_ctr_64_t		n_rows_deleted;
-
-	/** Number of rows inserted */
-	ulint_ctr_64_t		n_rows_inserted;
 
 	/** Number of system rows read. */
 	ulint_ctr_64_t		n_system_rows_read;
@@ -480,6 +479,16 @@ extern struct export_var_t export_vars;
 /** Global counters */
 extern srv_stats_t	srv_stats;
 
+/** Global singleton counters */
+extern singleton_counter_array<size_t,
+                               static_cast<size_t>(counters_t::SIZE)>
+    counter_array;
+
+#define COUNTER(IDX) counter_array[static_cast<size_t>(counters_t::IDX)]
+
+#define COUNTER_LOAD(IDX)                                                     \
+  counter_array.load(static_cast<size_t>(counters_t::IDX))
+
 /** Simulate compression failures. */
 extern uint srv_simulate_comp_failures;
 
@@ -709,7 +718,7 @@ struct export_var_t{
 	ulint innodb_buffer_pool_pages_made_not_young;
 	ulint innodb_buffer_pool_pages_made_young;
 	ulint innodb_buffer_pool_pages_old;
-	ulint innodb_buffer_pool_read_requests;	/*!< buf_pool.stat.n_page_gets */
+	ulint innodb_buffer_pool_read_requests;	/*!< COUNTER(N_PAGE_GETS) */
 	ulint innodb_buffer_pool_reads;		/*!< srv_buf_pool_reads */
 	ulint innodb_buffer_pool_write_requests;/*!< srv_stats.buf_pool_write_requests */
 	ulint innodb_buffer_pool_read_ahead_rnd;/*!< srv_read_ahead_rnd */
