@@ -1474,7 +1474,7 @@ srv_mon_process_existing_counter(
 	/* innodb_buffer_pool_read_requests, the number of logical
 	read requests */
 	case MONITOR_OVLD_BUF_POOL_READ_REQUESTS:
-		value = buf_pool.stat.n_page_gets;
+		value = COUNTER_LOAD(N_PAGE_GETS);
 		break;
 
 	/* innodb_buffer_pool_write_requests, the number of
@@ -1671,22 +1671,22 @@ srv_mon_process_existing_counter(
 
 	/* innodb_rows_read */
 	case MONITOR_OLVD_ROW_READ:
-		value = srv_stats.n_rows_read;
+		value = COUNTER_LOAD(N_ROWS_READ);
 		break;
 
 	/* innodb_rows_inserted */
 	case MONITOR_OLVD_ROW_INSERTED:
-		value = srv_stats.n_rows_inserted;
+		value = COUNTER_LOAD(N_ROWS_INSERTED);
 		break;
 
 	/* innodb_rows_deleted */
 	case MONITOR_OLVD_ROW_DELETED:
-		value = srv_stats.n_rows_deleted;
+		value = COUNTER_LOAD(N_ROWS_DELETED);
 		break;
 
 	/* innodb_rows_updated */
 	case MONITOR_OLVD_ROW_UPDTATED:
-		value = srv_stats.n_rows_updated;
+		value = COUNTER_LOAD(N_ROWS_UPDATED);
 		break;
 
 	/* innodb_system_rows_read */

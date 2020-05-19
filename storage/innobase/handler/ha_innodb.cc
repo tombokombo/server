@@ -8579,8 +8579,7 @@ ha_innobase::index_read(
 			srv_stats.n_system_rows_read.add(
 				thd_get_thread_id(m_prebuilt->trx->mysql_thd), 1);
 		} else {
-			srv_stats.n_rows_read.add(
-				thd_get_thread_id(m_prebuilt->trx->mysql_thd), 1);
+			COUNTER(N_ROWS_READ)++;
 		}
 		break;
 
@@ -8832,8 +8831,7 @@ ha_innobase::general_fetch(
 			srv_stats.n_system_rows_read.add(
 				thd_get_thread_id(trx->mysql_thd), 1);
 		} else {
-			srv_stats.n_rows_read.add(
-				thd_get_thread_id(trx->mysql_thd), 1);
+			COUNTER(N_ROWS_READ)++;
 		}
 		break;
 	case DB_RECORD_NOT_FOUND:
