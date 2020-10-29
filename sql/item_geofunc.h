@@ -589,6 +589,18 @@ public:
 };
 
 
+class Item_func_sphere_distance: public Item_real_func
+{
+  double spherical_distance_points(Geometry *g1, Geometry *g2,
+                                   const double sphere_r);
+public:
+  Item_func_sphere_distance(THD *thd, List<Item> &list):
+    Item_real_func(thd, list) {}
+  double val_real();
+  const char *func_name() const { return "st_distance_sphere"; }
+};
+
+
 class Item_func_pointonsurface: public Item_geometry_func
 {
   String tmp_value;
