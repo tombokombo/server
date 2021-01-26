@@ -523,6 +523,71 @@ fil_name_process(
 	}
 }
 
+#ifdef UNIV_DEBUG
+
+typedef std::vector<std::tuple<ulint, std::string, std::string>> smth_t;
+smth_t smth;
+
+static smth_t remove_duplicates_from(smth_t smth)
+{
+	for (size_t i = 0; i < smth.size(); i++) {
+		for (size_t j = i + 1; j < smth.size();) {
+			if (smth[i] == smth[j]) {
+				smth.erase(smth.begin() + j);
+				continue;
+			}
+			j++;
+		}
+	}
+	return smth;
+}
+
+static smth_t merge(smth_t smth)
+{
+	for (size_t i = 0; i < smth.size(); i++) {
+		for (size_t j = i + 1; j < smth.size();) {
+			auto a = std::get<2>(smth[i]);
+			auto b = std::get<1>(smth[j]);
+			if (a == b) {
+				std::get<2>(smth[i]) = std::get<2>(smth[j]);
+				smth.erase(smth.begin() + j);
+				continue;
+			}
+			j++;
+		}
+	}
+	return smth;
+}
+
+static bool has_duplicates(const smth_t& smth)
+{
+	std::set<std::string> uniq;
+
+	for (smth_t::const_iterator it = smth.begin(), end = smth.end(); it != end;
+	     ++it) {
+		uniq.insert(std::get<2>(*it));
+	}
+
+	return uniq.size() != smth.size();
+}
+
+typedef std::map<std::string, std::vector<std::string>> rename_infos_t;
+rename_infos_t rename_infos;
+
+// static bool has_rename_duplicates() {
+// 	std::set<std::string> uniq;
+
+// 	for (rename_infos_t::iterator it = rename_infos.begin(),
+// 				      end = rename_infos.end();
+// 	     it != end; ++it) {
+// 		uniq.insert(it->second.back());
+// 	}
+
+// 	return uniq.size() != rename_infos.size();
+// }
+
+#endif
+
 /** Parse or process a MLOG_FILE_* record.
 @param[in]	ptr		redo log record
 @param[in]	end		end of the redo log buffer
@@ -681,6 +746,21 @@ fil_name_parse(
 		fil_name_process(
 			reinterpret_cast<char*>(new_name), new_len,
 			space_id, false);
+
+#ifdef UNIV_DEBUG
+		smth.push_back(std::make_tuple(
+			space_id,
+			std::string(reinterpret_cast<const char*>(ptr), len),
+			std::string(reinterpret_cast<char*>(new_name),
+				    new_len)));
+
+		std::vector<std::string>& rename_info
+			= rename_infos[std::string(
+				reinterpret_cast<const char*>(ptr))];
+		rename_info.push_back(std::string(
+			reinterpret_cast<char*>(new_name), new_len));
+
+#endif
 
 		if (log_file_op) {
 			log_file_op(space_id, NULL,
@@ -3503,6 +3583,10 @@ recv_group_scan_log_recs(
 			 available_mem, &store_to_hash, log_sys->buf,
 			 checkpoint_lsn, start_lsn, end_lsn,
 			 contiguous_lsn, &group->scanned_lsn));
+
+	ut_d(smth_t uniq = remove_duplicates_from(smth));
+	ut_d(smth_t merged = merge(uniq));
+	ut_ad(!has_duplicates(merged));
 
 	if (recv_sys->found_corrupt_log || recv_sys->found_corrupt_fs) {
 		DBUG_RETURN(false);
