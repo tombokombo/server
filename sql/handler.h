@@ -4895,5 +4895,7 @@ int del_global_table_stat(THD *thd, const  LEX_CSTRING *db, const LEX_CSTRING *t
 char *xid_to_str(char *buf, const XID &xid);
 #endif // !DBUG_OFF
 uint ha_count_rw(THD *thd, bool all);
+uint ha_check_and_coalesce_trx_read_only(THD *thd, Ha_trx_info *ha_list,
+                                         bool all);
 
 #endif /* HANDLER_INCLUDED */

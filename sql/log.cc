@@ -10334,9 +10334,9 @@ Recovery_context::Recovery_context() :
   id_binlog(UINT_MAX),
   cs_alg(BINLOG_CHECKSUM_ALG_UNDEF), single_binlog(false)
 {
-  last_gtid_coord= {0, 0};
-  binlog_truncate_coord= {0, 0};
-  binlog_unsafe_coord= {0, 0};
+  last_gtid_coord= std::pair<uint,my_off_t>(0,0);
+  binlog_truncate_coord= std::pair<uint,my_off_t>(0,0);
+  binlog_unsafe_coord= std::pair<uint,my_off_t>(0,0);
   binlog_truncate_file_name[0]= 0;
   binlog_unsafe_file_name  [0]= 0;
 }
@@ -10469,16 +10469,36 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
 }
 
 /*
-  Is invoked when an unsafe-to-truncate group is detected to
-  update the maximum coordinate when applies.
+  Is invoked when a non-2pc group is detected by its terminal event.
+  It is "normally" unsafe truncate for the semisync-slave recovery so
+  the maximum unsafe coordinate is updated when applies.
+  In which case, *exeptionally*,
+  the no-engine group is just invalidated to not contribute to binlog state
+  and resets its marking as non-2pc.
 */
 void Recovery_context::update_binlog_unsafe_coord(LOG_INFO *linfo)
 {
-  if (binlog_unsafe_coord.second == 0 ||
-      last_gtid_coord > binlog_unsafe_coord)
+  last_gtid_no2pc= true;
+  if (!do_truncate)
+    return;
+
+  if (binlog_truncate_coord.second == 0 ||
+      last_gtid_coord > binlog_truncate_coord)
   {
-    binlog_unsafe_coord= last_gtid_coord;
-    strmake_buf(binlog_unsafe_file_name, linfo->log_file_name);
+    /*
+      Potentially unsafe when the truncate coordinate is not determined,
+      just detected as unsafe when behind the latter.
+    */
+    if (last_gtid_engines == 0)
+    {
+      if (binlog_truncate_coord.second > 0)
+        last_gtid_valid= false;
+    }
+    else
+    {
+      binlog_unsafe_coord= last_gtid_coord;
+      strmake_buf(binlog_unsafe_file_name, linfo->log_file_name);
+    }
   }
 }
 
@@ -10775,8 +10795,6 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
             ((Query_log_event *)ev)->is_rollback())
         {
           ctx.update_binlog_unsafe_coord(linfo);
-
-          ctx.last_gtid_no2pc= true; // may be also FL_TRANSACTIONAL
         }
         break;
 #endif
@@ -10808,9 +10826,10 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
 
         if (rpl_global_gtid_binlog_state.update_nolock(&ctx.last_gtid, false))
           goto err2;
-        ctx.last_gtid_no2pc= false;
         ctx.last_gtid_valid= false;
       }
+      if (ctx.last_gtid_no2pc)
+        ctx.last_gtid_no2pc= false;
       ctx.prev_event_pos= ev->log_pos;
 #endif
       if (typ != FORMAT_DESCRIPTION_EVENT)

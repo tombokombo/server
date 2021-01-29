@@ -16,8 +16,8 @@
 #
 # MDEV-21117: recovery for --rpl-semi-sync-slave-enabled server
 
-
 --source include/have_innodb.inc
+--source include/have_aria.inc
 --source include/have_log_bin.inc
 --source include/have_debug.inc
 --source include/have_binlog_format_statement.inc
@@ -25,59 +25,52 @@
 call mtr.add_suppression("Can.t init tc log");
 call mtr.add_suppression("Aborting");
 
-connect(master,localhost,root,,);
-connect(master1,localhost,root,,);
+# The following cases are tested:
+# A. 2pc transaction is followed by a blank "zero-engines" one
+# B. 2pc transaction is followed by the blank one
+# C. Similarly to A, with the XA blank transaction
 
---connection master
+--connection default
 RESET MASTER;
-CREATE TABLE t  ( f INT ) ENGINE=INNODB;
-INSERT INTO t  VALUES (10);
-# To complicate recovery add up non-safe events to binlog
-CREATE TABLE tm ( f INT ) ENGINE=MyISAM;
-INSERT INTO tm VALUES (10);
+CREATE TABLE t  ( f INT )  ENGINE=INNODB;
+CREATE TABLE t2  ( f INT ) ENGINE=INNODB;
+CREATE TABLE tm ( f INT ) ENGINE=Aria;
 
---connection master1
-# Hold insert after write to binlog and before "run_commit_ordered" in engine
-SET DEBUG_SYNC= "commit_before_update_end_pos SIGNAL con1_ready WAIT_FOR con1_go";
-send INSERT INTO t VALUES (20);
+--echo # Case A.
+# Both are doomed into truncation.
+--let $this_search_pattern = Successfully truncated.*to remove transactions starting from GTID 0-1-6
+--let $query1 = INSERT INTO t VALUES (20)
+--let $query2 = DELETE FROM t2 WHERE f = 0
+--source binlog_truncate_active_log.inc
 
---connection master
-SET DEBUG_SYNC= "now WAIT_FOR con1_ready";
+--echo # Case B.
+# The inverted sequence ends up to truncate only $query2
+--let $this_search_pattern = Successfully truncated.*to remove transactions starting from GTID 0-1-10
+--let $query1 = DELETE FROM t2 WHERE f = 0
+--let $query2 = INSERT INTO t VALUES (20)
+--source binlog_truncate_active_log.inc
 
---write_file $MYSQLTEST_VARDIR/tmp/mysqld.1.expect
-wait
-EOF
 
---source include/kill_mysqld.inc
---source include/wait_until_disconnected.inc
-#
-# Server restart
-#
---append_file $MYSQLTEST_VARDIR/tmp/mysqld.1.expect
-restart: --rpl-semi-sync-slave-enabled=1
-EOF
+delimiter |;
+CREATE PROCEDURE sp_blank_xa()
+BEGIN
+ XA START   'blank';
+ DELETE FROM t2 WHERE f = 666 /* no such record */;
+ XA END     'blank';
+ XA PREPARE 'blank';
+END|
+delimiter ;|
 
-connection default;
---enable_reconnect
---source include/wait_until_connected_again.inc
 
-# Check error log for a successful truncate message.
-let $log_error_= `SELECT @@GLOBAL.log_error`;
-if(!$log_error_)
-{
-    # MySQL Server on windows is started with --console and thus
-    # does not know the location of its .err log, use default location
-    let $log_error_ = $MYSQLTEST_VARDIR/log/mysqld.1.err;
-}
---let SEARCH_FILE=$log_error_
---let SEARCH_RANGE=-50000
---let SEARCH_PATTERN=truncated binlog file:.*master.*000001
---replace_regex /FOUND [0-9]+/FOUND #/
---source include/search_pattern_in_file.inc
+--echo # Case C.
+--let $this_search_pattern = Successfully truncated.*to remove transactions starting from GTID 0-1-13
+--let $query1 = INSERT INTO t VALUES (20)
+--let $pre_q2 = CALL sp_blank_xa
+--let $query2 =  XA COMMIT  'blank'
+--source binlog_truncate_active_log.inc
+DROP PROCEDURE sp_blank_xa;
 
---echo "One row should be present in table 't'"
-SELECT COUNT(*) as 'One' FROM t;
+--echo # Cleanup
+DROP TABLE t,t2,tm;
 
---echo "gtid_binlog_state should be 0-1-4
-SELECT @@GLOBAL.gtid_binlog_state;
-DROP TABLE t;
+--echo # End of the tests

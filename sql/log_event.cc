@@ -7991,13 +7991,20 @@ Gtid_log_event::Gtid_log_event(THD *thd_arg, uint64 seq_no_arg,
   if (thd_arg->rgi_slave)
     flags2|= (thd_arg->rgi_slave->gtid_ev_flags2 & (FL_DDL|FL_WAITED));
   /* count non-zero extra recoverable engines; total = extra + 1 */
-  if (is_transactional && has_xid &&
-      (extra_engines=
-       max<uint>(1, ha_count_rw(thd, thd_arg->in_multi_stmt_transaction_mode()))
-       - 1)
-      > 0)
+  if (is_transactional)
   {
-    flags_extra|= FL_EXTRA_MULTI_ENGINE;
+    if (has_xid)
+    {
+      extra_engines=
+        max<uint>(1, ha_count_rw(thd, thd_arg->in_multi_stmt_transaction_mode()))
+        - 1;
+    }
+    else if (unlikely(thd_arg->is_1pc_ro_trans))
+    {
+      extra_engines= UINT_MAX; // neither extra nor base engine
+    }
+    if (extra_engines > 0)
+      flags_extra|= FL_EXTRA_MULTI_ENGINE;
   }
 }
 

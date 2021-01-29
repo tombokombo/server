@@ -1282,7 +1282,6 @@ uint ha_count_rw(THD *thd, bool all)
                 engines with read-write changes.
 */
 
-static
 uint
 ha_check_and_coalesce_trx_read_only(THD *thd, Ha_trx_info *ha_list,
                                     bool all)
@@ -1499,7 +1498,9 @@ int ha_commit_trans(THD *thd, bool all)
 
   if (trans->no_2pc || (rw_ha_count <= 1))
   {
+    thd->is_1pc_ro_trans= !rw_trans;
     error= ha_commit_one_phase(thd, all);
+    thd->is_1pc_ro_trans= false;
     goto done;
   }
 
