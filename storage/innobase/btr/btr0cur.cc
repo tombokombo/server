@@ -6180,129 +6180,161 @@ btr_estimate_n_rows_in_range_low(
 	example if "5 < x AND x <= 10" then we should not include the left
 	boundary, but should include the right one. */
 
-	mtr_start(&mtr);
+	bool should_count_the_left_border;
 
-	cursor.path_arr = path1;
+	static constexpr size_t RETRIES = 4;
 
-	bool	should_count_the_left_border;
+	for (size_t i = 0; i < RETRIES; i++) {
+		mtr.start();
 
-	if (dtuple_get_n_fields(tuple1->tuple) > 0) {
+		cursor.path_arr = path1;
 
-              btr_cur_search_to_nth_level(index, 0, tuple1->tuple,
-                                            tuple1->mode,
-					    BTR_SEARCH_LEAF | BTR_ESTIMATE,
-					    &cursor, 0, &mtr);
+		ulint latch_mode = BTR_SEARCH_LEAF | BTR_ESTIMATE;
 
-		ut_ad(!page_rec_is_infimum(btr_cur_get_rec(&cursor)));
-
-		/* We should count the border if there are any records to
-		match the criteria, i.e. if the maximum record on the tree is
-		5 and x > 3 is specified then the cursor will be positioned at
-		5 and we should count the border, but if x > 7 is specified,
-		then the cursor will be positioned at 'sup' on the rightmost
-		leaf page in the tree and we should not count the border. */
-		should_count_the_left_border
-			= !page_rec_is_supremum(btr_cur_get_rec(&cursor));
-	} else {
-		dberr_t err = DB_SUCCESS;
-
-		err = btr_cur_open_at_index_side(true, index,
-					   BTR_SEARCH_LEAF | BTR_ESTIMATE,
-					   &cursor, 0, &mtr);
-
-		if (err != DB_SUCCESS) {
-			ib::warn() << " Error code: " << err
-				   << " btr_estimate_n_rows_in_range_low "
-				   << " called from file: "
-				   << __FILE__ << " line: " << __LINE__
-				   << " table: " << index->table->name
-				   << " index: " << index->name;
+		if (i == RETRIES - 1) {
+			mtr_s_lock_index(index, &mtr);
+			latch_mode = latch_mode | BTR_ALREADY_S_LATCHED;
 		}
 
-		ut_ad(page_rec_is_infimum(btr_cur_get_rec(&cursor)));
+		if (dtuple_get_n_fields(tuple1->tuple) > 0) {
 
-		/* The range specified is wihout a left border, just
-		'x < 123' or 'x <= 123' and btr_cur_open_at_index_side()
-		positioned the cursor on the infimum record on the leftmost
-		page, which must not be counted. */
-		should_count_the_left_border = false;
+			btr_cur_search_to_nth_level(
+				index, 0, tuple1->tuple, tuple1->mode,
+				latch_mode, &cursor, 0,
+				&mtr);
+
+			ut_ad(!page_rec_is_infimum(btr_cur_get_rec(&cursor)));
+
+			/* We should count the border if there are any records
+			to match the criteria, i.e. if the maximum record on
+			the tree is 5 and x > 3 is specified then the cursor
+			will be positioned at 5 and we should count the border,
+			but if x > 7 is specified, then the cursor will be
+			positioned at 'sup' on the rightmost leaf page in the
+			tree and we should not count the border. */
+			should_count_the_left_border = !page_rec_is_supremum(
+				btr_cur_get_rec(&cursor));
+		} else {
+			dberr_t err = DB_SUCCESS;
+
+			err = btr_cur_open_at_index_side(
+				true, index, latch_mode,
+				&cursor, 0, &mtr);
+
+			if (err != DB_SUCCESS) {
+				ib::warn()
+					<< " Error code: " << err
+					<< " btr_estimate_n_rows_in_range_low "
+					<< " called from file: " << __FILE__
+					<< " line: " << __LINE__
+					<< " table: " << index->table->name
+					<< " index: " << index->name;
+			}
+
+			ut_ad(page_rec_is_infimum(btr_cur_get_rec(&cursor)));
+
+			/* The range specified is wihout a left border, just
+			'x < 123' or 'x <= 123' and
+			btr_cur_open_at_index_side() positioned the cursor on
+			the infimum record on the leftmost
+			page, which must not be counted. */
+			should_count_the_left_border = false;
+		}
+
+		tuple1->page_id= cursor.page_cur.block->page.id();
+
+		mtr.commit();
+
+		if (cursor.page_cur.block->page.status == buf_page_t::NORMAL) {
+			break;
+		}
 	}
-
-        tuple1->page_id= cursor.page_cur.block->page.id();
-
-	mtr_commit(&mtr);
 
 	if (!index->is_readable()) {
 		return 0;
 	}
 
-	mtr_start(&mtr);
+	bool should_count_the_right_border;
 
-	cursor.path_arr = path2;
+	for (size_t i = 0; i < RETRIES; i++) {
+		mtr.start();
 
-	bool	should_count_the_right_border;
+		cursor.path_arr = path2;
 
-	if (dtuple_get_n_fields(tuple2->tuple) > 0) {
+		if (dtuple_get_n_fields(tuple2->tuple) > 0) {
 
-		btr_cur_search_to_nth_level(index, 0, tuple2->tuple,
-                                            mode2,
-					    BTR_SEARCH_LEAF | BTR_ESTIMATE,
-					    &cursor, 0, &mtr);
+			btr_cur_search_to_nth_level(
+				index, 0, tuple2->tuple, mode2,
+				BTR_SEARCH_LEAF | BTR_ESTIMATE, &cursor, 0,
+				&mtr);
 
-		const rec_t*	rec = btr_cur_get_rec(&cursor);
+			const rec_t* rec = btr_cur_get_rec(&cursor);
 
-		ut_ad(!(mode2 == PAGE_CUR_L && page_rec_is_supremum(rec)));
+			ut_ad(!(mode2 == PAGE_CUR_L
+				&& page_rec_is_supremum(rec)));
 
-		should_count_the_right_border
-			= (mode2 == PAGE_CUR_LE /* if the range is '<=' */
-			   /* and the record was found */
-			   && cursor.low_match >= dtuple_get_n_fields(tuple2->tuple))
-			|| (mode2 == PAGE_CUR_L /* or if the range is '<' */
-			    /* and there are any records to match the criteria,
-			    i.e. if the minimum record on the tree is 5 and
-			    x < 7 is specified then the cursor will be
-			    positioned at 5 and we should count the border, but
-			    if x < 2 is specified, then the cursor will be
-			    positioned at 'inf' and we should not count the
-			    border */
-			    && !page_rec_is_infimum(rec));
-		/* Notice that for "WHERE col <= 'foo'" MySQL passes to
-		ha_innobase::records_in_range():
-		min_key=NULL (left-unbounded) which is expected
-		max_key='foo' flag=HA_READ_AFTER_KEY (PAGE_CUR_G), which is
-		unexpected - one would expect
-		flag=HA_READ_KEY_OR_PREV (PAGE_CUR_LE). In this case the
-		cursor will be positioned on the first record to the right of
-		the requested one (can also be positioned on the 'sup') and
-		we should not count the right border. */
-	} else {
-		dberr_t err = DB_SUCCESS;
+			should_count_the_right_border
+				= (mode2 == PAGE_CUR_LE /* if the range is '<='
+							 */
+				   /* and the record was found */
+				   && cursor.low_match >= dtuple_get_n_fields(
+					      tuple2->tuple))
+				  || (mode2 == PAGE_CUR_L /* or if the range is
+							     '<' */
+				      /* and there are any records to match the
+				      criteria, i.e. if the minimum record on
+				      the tree is 5 and x < 7 is specified then
+				      the cursor will be positioned at 5 and we
+				      should count the border, but if x < 2 is
+				      specified, then the cursor will be
+				      positioned at 'inf' and we should not
+				      count the border */
+				      && !page_rec_is_infimum(rec));
+			/* Notice that for "WHERE col <= 'foo'" MySQL passes to
+			ha_innobase::records_in_range():
+			min_key=NULL (left-unbounded) which is expected
+			max_key='foo' flag=HA_READ_AFTER_KEY (PAGE_CUR_G),
+			which is unexpected - one would expect
+			flag=HA_READ_KEY_OR_PREV (PAGE_CUR_LE). In this case
+			the cursor will be positioned on the first record to
+			the right of the requested one (can also be positioned
+			on the 'sup') and
+			we should not count the right border. */
+		} else {
+			dberr_t err = DB_SUCCESS;
 
-		err = btr_cur_open_at_index_side(false, index,
-					   BTR_SEARCH_LEAF | BTR_ESTIMATE,
-					   &cursor, 0, &mtr);
+			err = btr_cur_open_at_index_side(
+				false, index, BTR_SEARCH_LEAF | BTR_ESTIMATE,
+				&cursor, 0, &mtr);
 
-		if (err != DB_SUCCESS) {
-			ib::warn() << " Error code: " << err
-				   << " btr_estimate_n_rows_in_range_low "
-				   << " called from file: "
-				   << __FILE__ << " line: " << __LINE__
-				   << " table: " << index->table->name
-				   << " index: " << index->name;
+			if (err != DB_SUCCESS) {
+				ib::warn()
+					<< " Error code: " << err
+					<< " btr_estimate_n_rows_in_range_low "
+					<< " called from file: " << __FILE__
+					<< " line: " << __LINE__
+					<< " table: " << index->table->name
+					<< " index: " << index->name;
+			}
+
+			ut_ad(page_rec_is_supremum(btr_cur_get_rec(&cursor)));
+
+			/* The range specified is wihout a right border, just
+			'x > 123' or 'x >= 123' and
+			btr_cur_open_at_index_side() positioned the cursor on
+			the supremum record on the rightmost page, which must
+			not be counted. */
+			should_count_the_right_border = false;
 		}
 
-		ut_ad(page_rec_is_supremum(btr_cur_get_rec(&cursor)));
+		tuple2->page_id = cursor.page_cur.block->page.id();
 
-		/* The range specified is wihout a right border, just
-		'x > 123' or 'x >= 123' and btr_cur_open_at_index_side()
-		positioned the cursor on the supremum record on the rightmost
-		page, which must not be counted. */
-		should_count_the_right_border = false;
+		mtr.commit();
+
+		if (cursor.page_cur.block->page.status == buf_page_t::NORMAL) {
+			break;
+		}
 	}
-
-        tuple2->page_id= cursor.page_cur.block->page.id();
-
-	mtr_commit(&mtr);
 
 	/* We have the path information for the range in path1 and path2 */
 
