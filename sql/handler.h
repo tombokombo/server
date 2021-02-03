@@ -35,6 +35,7 @@
 #include "sql_array.h"          /* Dynamic_array<> */
 #include "mdl.h"
 #include "vers_string.h"
+#include "span.h"
 
 #include "sql_analyze_stmt.h" // for Exec_time_tracker 
 
@@ -3952,6 +3953,11 @@ public:
     { return HA_ERR_WRONG_COMMAND; }
   virtual int rnd_same(uchar *buf, uint inx)
     { return HA_ERR_WRONG_COMMAND; }
+
+  virtual float position_in_index(uint idx, st_::span<uchar> record) {
+    DBUG_ASSERT(0 && "not implemented");
+    return 0.0f;
+  }
 
   virtual ha_rows records_in_range(uint inx, const key_range *min_key,
                                    const key_range *max_key,

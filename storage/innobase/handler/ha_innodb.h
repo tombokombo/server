@@ -178,6 +178,8 @@ public:
 
 	int start_stmt(THD *thd, thr_lock_type lock_type) override;
 
+	float position_in_index(uint index_idx, span<uchar> record) override;
+
 	ha_rows records_in_range(
                 uint                    inx,
                 const key_range*        min_key,

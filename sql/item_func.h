@@ -3789,4 +3789,24 @@ bool update_hash(user_var_entry *entry, bool set_null, void *ptr, size_t length,
                  Item_result type, CHARSET_INFO *cs,
                  bool unsigned_arg);
 
+class Item_func_position_in_index : public Item_real_func
+{
+public:
+  THD *passed_thd;
+
+  Item_func_position_in_index(THD *thd, Item *arg1, Item *arg2)
+      : Item_real_func(thd, arg1, arg2), passed_thd(thd)
+  {
+  }
+
+  const char *func_name() const override { return "position_in_index"; }
+
+  double val_real() override;
+
+  virtual Item *get_copy(THD *thd) override
+  {
+    return get_item_copy<Item_func_position_in_index>(thd, this);
+  }
+};
+
 #endif /* ITEM_FUNC_INCLUDED */

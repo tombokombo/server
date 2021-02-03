@@ -13502,6 +13502,40 @@ ha_innobase::rename_table(
 	DBUG_RETURN(convert_error_code_to_mysql(error, 0, NULL));
 }
 
+float ha_innobase::position_in_index(uint index_idx, span<uchar> record)
+{
+	active_index = index_idx;
+
+	KEY* key = table->key_info + active_index;
+	dict_index_t* index = innobase_get_index(active_index);
+
+	(void)key;
+	(void)index;
+
+	mem_heap_t *heap = mem_heap_create(128);
+	auto heap_free = make_scope_exit([heap]() { mem_heap_free(heap); });
+
+	dtuple_t *dtuple = dtuple_create(heap, key->ext_key_parts);
+	dict_index_copy_types(dtuple, index, key->ext_key_parts);
+
+	row_sel_convert_mysql_key_to_innobase(
+		dtuple, m_prebuilt->srch_key_val1,
+		m_prebuilt->srch_key_val_len, index, (byte*)record.data(),
+		(ulint)record.size());
+
+	mtr_t mtr;
+	btr_cur_t cursor;
+
+	mtr.start();
+
+	btr_cur_search_to_nth_level(index, 0, dtuple, PAGE_CUR_LE,
+				    BTR_SEARCH_LEAF, &cursor, 0, &mtr);
+
+	mtr.commit();
+
+	return 4321.0f;
+}
+
 /*********************************************************************//**
 Estimates the number of index records in a range.
 @return estimated number of rows */

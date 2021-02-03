@@ -7219,3 +7219,11 @@ void Item_func_setval::print(String *str, enum_query_type query_type)
   str->append_ulonglong(round);
   str->append(')');
 }
+
+double Item_func_position_in_index::val_real()
+{
+  int val= (int) args[1]->val_int();
+  TABLE *table= passed_thd->open_tables;
+  return table->file->position_in_index(
+      0, st_::span<uchar>(reinterpret_cast<uchar *>(&val), 4));
+}

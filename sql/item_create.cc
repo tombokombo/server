@@ -2340,6 +2340,19 @@ protected:
 };
 
 
+class Create_func_position_in_index : public Create_func_arg2
+{
+public:
+  virtual Item *create_2_arg(THD *thd, Item *arg1, Item *arg2);
+
+  static Create_func_position_in_index s_singleton;
+
+protected:
+  Create_func_position_in_index() {}
+  virtual ~Create_func_position_in_index() {}
+};
+
+
 class Create_func_xml_update : public Create_func_arg3
 {
 public:
@@ -5344,6 +5357,14 @@ Create_func_xml_extractvalue::create_2_arg(THD *thd, Item *arg1, Item *arg2)
 }
 
 
+Create_func_position_in_index Create_func_position_in_index::s_singleton;
+
+Item *
+Create_func_position_in_index::create_2_arg(THD *thd, Item *arg1, Item *arg2)
+{
+  return new (thd->mem_root) Item_func_position_in_index(thd, arg1, arg2);
+}
+
 Create_func_xml_update Create_func_xml_update::s_singleton;
 
 Item*
@@ -5455,6 +5476,7 @@ static Native_func_registry func_array[] =
   { { STRING_WITH_LEN("EXP") }, BUILDER(Create_func_exp)},
   { { STRING_WITH_LEN("EXPORT_SET") }, BUILDER(Create_func_export_set)},
   { { STRING_WITH_LEN("EXTRACTVALUE") }, BUILDER(Create_func_xml_extractvalue)},
+  { { STRING_WITH_LEN("POSITION_IN_INDEX") }, BUILDER(Create_func_position_in_index)},
   { { STRING_WITH_LEN("FIELD") }, BUILDER(Create_func_field)},
   { { STRING_WITH_LEN("FIND_IN_SET") }, BUILDER(Create_func_find_in_set)},
   { { STRING_WITH_LEN("FLOOR") }, BUILDER(Create_func_floor)},
