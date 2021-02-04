@@ -1604,6 +1604,9 @@ search_loop:
 retry_page_get:
 	ut_ad(n_blocks < BTR_MAX_LEVELS);
 	tree_savepoints[n_blocks] = mtr_set_savepoint(mtr);
+	if (estimate) {
+		buf_mode = BUF_GET_IF_IN_POOL;
+	}
 	block = buf_page_get_gen(page_id, zip_size, rw_latch, guess,
 				 buf_mode, mtr, &err,
 				 height == 0 && !index->is_clust());
@@ -1718,6 +1721,9 @@ retry_page_get:
 
 			prev_tree_savepoints[prev_n_blocks]
 				= mtr_set_savepoint(mtr);
+			if (estimate) {
+				buf_mode = BUF_GET_IF_IN_POOL;
+			}
 			get_block = buf_page_get_gen(
 				page_id_t(page_id.space(), left_page_no),
 				zip_size, rw_latch, NULL, buf_mode,
@@ -1750,6 +1756,9 @@ retry_page_get:
 			tree_blocks[n_blocks]);
 
 		tree_savepoints[n_blocks] = mtr_set_savepoint(mtr);
+		if (estimate) {
+			buf_mode = BUF_GET_IF_IN_POOL;
+		}
 		block = buf_page_get_gen(page_id, zip_size,
 					 rw_latch, NULL, buf_mode, mtr, &err);
 		tree_blocks[n_blocks] = block;
@@ -2620,8 +2629,9 @@ btr_cur_open_at_index_side(
 		const ulint rw_latch = height
 			&& (latch_mode != BTR_MODIFY_TREE || height == level)
 			? upper_rw_latch : RW_NO_LATCH;
+		ulint mode = estimate ? BUF_GET_IF_IN_POOL : BUF_GET;
 		buf_block_t* block = buf_page_get_gen(page_id, zip_size,
-						      rw_latch, NULL, BUF_GET,
+						      rw_latch, NULL, mode,
 						      mtr, &err,
 						      height == 0
 						      && !index->is_clust());
