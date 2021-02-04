@@ -10275,7 +10275,7 @@ public:
   Recovery_context();
   bool decide_or_assess(xid_recovery_member *member, int round,
                         Format_description_log_event *fdle,
-                        LOG_INFO *linfo);
+                        LOG_INFO *linfo, my_off_t pos);
   void process_gtid(int round, Gtid_log_event *gev, LOG_INFO *linfo);
   int  next_binlog_or_round(int& round,
                             const char *last_log_name,
@@ -10290,11 +10290,16 @@ public:
   }
   bool complete(MYSQL_BIN_LOG *log);
   void update_binlog_unsafe_coord(LOG_INFO *linfo);
+  void reset_truncate_coord(my_off_t pos);
+  void set_truncate_coord(LOG_INFO *linfo, int round,
+                          enum_binlog_checksum_alg fd_cs_alg);
 };
 
 bool Recovery_context::complete(MYSQL_BIN_LOG *log)
 {
-  if (do_truncate && binlog_truncate_coord.second)
+  if (do_truncate && binlog_truncate_coord.second &&
+      /* Truncation is not done when there's no transaction to roll back */
+      truncate_gtid.seq_no > 0)
   {
     if (is_safe())
     {
@@ -10314,8 +10319,9 @@ bool Recovery_context::complete(MYSQL_BIN_LOG *log)
       sql_print_error("Cannot trim the binary log to file:%s "
                       "pos:%llu as unsafe statement "
                       "is found at file:%s pos:%llu which is "
-                      "beyond the truncation position; "
-                      "transactions in doubt are left intact. ",
+                      "beyond the truncation position "
+                      "(the farest in binlog order only is reported); "
+                      "all transactions in doubt are left intact. ",
                       binlog_truncate_file_name, binlog_truncate_coord.second,
                       binlog_unsafe_file_name, binlog_unsafe_coord.second);
       return true;
@@ -10331,7 +10337,7 @@ Recovery_context::Recovery_context() :
   last_gtid_engines(0),
   do_truncate(rpl_semi_sync_slave_enabled),
   truncate_validated(false), truncate_reset_done(false),
-  id_binlog(UINT_MAX),
+  truncate_set_in_1st(false), id_binlog(UINT_MAX),
   cs_alg(BINLOG_CHECKSUM_ALG_UNDEF), single_binlog(false)
 {
   last_gtid_coord= std::pair<uint,my_off_t>(0,0);
@@ -10341,9 +10347,44 @@ Recovery_context::Recovery_context() :
   binlog_unsafe_file_name  [0]= 0;
 }
 
+/*
+  Is called when a committed or to-be-committed transaction is detected.
+  truncate_gtid is set to "nil" with its rpl_gtid::seq_no := 0.
+  truncate_reset_done remembers the fact of that has been done at least
+  once in the current round.
+*/
+void Recovery_context::reset_truncate_coord(my_off_t pos)
+{
+  DBUG_ASSERT(binlog_truncate_coord.second == 0 ||
+              last_gtid_coord >= binlog_truncate_coord ||
+              truncate_set_in_1st);
+
+  //binlog_truncate_coord= std::pair<uint,my_off_t>(id_binlog, pos);
+  truncate_gtid= rpl_gtid();
+  truncate_reset_done= true;
+}
+
+
+/*
+  Sets binlog_truncate_pos to the value of the current transaction's gtid.
+  In multi-engine case that might be just an assessment to be exacted
+  in the current round and confirmed in a next one.
+*/
+void Recovery_context::set_truncate_coord(LOG_INFO *linfo, int round,
+                                          enum_binlog_checksum_alg fd_cs_alg)
+{
+  binlog_truncate_coord= last_gtid_coord;
+  strmake_buf(binlog_truncate_file_name, linfo->log_file_name);
+
+  truncate_gtid= last_gtid;
+  last_gtid_valid= false;       // may still (see gtid) flip later
+  cs_alg= fd_cs_alg;
+  truncate_set_in_1st= (round == 1);
+}
+
 bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
                                         Format_description_log_event *fdle,
-                                        LOG_INFO *linfo)
+                                        LOG_INFO *linfo, my_off_t pos)
 {
   if (member)
   {
@@ -10355,8 +10396,10 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
                     });
     /*
       xid in doubt are resolved as follows:
-      in_engine_prepare is examined and set to/left to stay as zero
-      for the commit decision, or set to one for the rollback.
+      in_engine_prepare is compared agaist binlogged info to
+      yield the commit-or-rollback decision in the normal case.
+      In the semisync-slave recovery the decision may be
+      approximate to change in later rounds.
     */
     if (member->in_engine_prepare > last_gtid_engines)
     {
@@ -10373,12 +10416,14 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
     }
     else if (member->in_engine_prepare < last_gtid_engines)
     {
+      DBUG_EXECUTE_IF("binlog_truncate_partial_commit",
+                      member->in_engine_prepare= 2;);
+      DBUG_ASSERT(member->in_engine_prepare > 0);
       /*
         This is an "unlikely" branch of two or more engines in transaction
         that is partially committed, so to complete.
       */
-      member->in_engine_prepare= 0;
-
+      member->decided_to_commit= true;
       if (do_truncate)
       {
         /*
@@ -10387,18 +10432,15 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
           to not-validated yet position ensues correcting early
           estimates in the following round(s).
         */
-        if (!truncate_validated && binlog_truncate_coord.second > 0)
-        {
-          binlog_truncate_coord.second= 0; // reset possible early estimate
-          truncate_reset_done= true;
-        }
+        if (!truncate_validated)
+          reset_truncate_coord(pos);
       }
     }
     else // member->in_engine_prepare == last_gtid_engines
     {
       if (!do_truncate) // "normal" recovery
       {
-        member->in_engine_prepare= 0;
+        member->decided_to_commit= true;
       }
       else
       {
@@ -10408,8 +10450,7 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
           may change only through previous reset
           unless this xid in doubt is the first in the 2nd round.
         */
-        if (binlog_truncate_coord.second == 0 ||
-            (!truncate_validated && truncate_set_in_1st && round == 2))
+        if (!truncate_validated)
         {
           DBUG_ASSERT(round <= 2);
           /*
@@ -10418,33 +10459,29 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
             it's "improved" after being set in the 1st round.
           */
           DBUG_ASSERT(binlog_truncate_coord.second == 0 ||
-                      last_gtid_coord > binlog_truncate_coord ||
+                      last_gtid_coord >= binlog_truncate_coord ||
                       (round == 2 && truncate_set_in_1st));
-          /*
-            In multi-engine case binlog_truncate_pos may be guessed
-            and reset (in other branch) multiple times until is settled.
-            [The single engine case can be optimized to set the truncate
-            offset two times at most (todo)].
-          */
-          binlog_truncate_coord= last_gtid_coord;
-          strmake_buf(binlog_truncate_file_name, linfo->log_file_name);
+          /* [G_1]?,[U]*,[u]*,g_k^last \cap !( g_1,[Uu]*, g_k^last */
+          if (truncate_gtid.seq_no == 0 /* was reset or never set */ ||
+              (truncate_set_in_1st && round == 2 /* reevaluted at round turn */))
+            set_truncate_coord(linfo, round, fdle->checksum_alg);
 
-          truncate_gtid= last_gtid;
-          last_gtid_valid= false;       // may still (see gtid) flip later
-          cs_alg= fdle->checksum_alg;
-          member->in_engine_prepare= 1; // may flip later
-          truncate_set_in_1st= (round == 1);
+          DBUG_ASSERT(member->decided_to_commit == false); // may flip later
         }
-        else if (truncate_validated)
+        else
         {
           DBUG_ASSERT(!truncate_reset_done); // the position was settled
           /*
             Correct earlier decisions of 1st and/or 2nd round to
             rollback and invalidate last_gtid in binlog state.
           */
-          if ((member->in_engine_prepare=
-               last_gtid_coord >= binlog_truncate_coord))
+          if (!(member->decided_to_commit=
+               last_gtid_coord < binlog_truncate_coord))
+          {
             last_gtid_valid= false;    // settled
+            if (truncate_gtid.seq_no == 0)
+              truncate_gtid= last_gtid;
+          }
         }
       }
     }
@@ -10458,11 +10495,8 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
       are actually of committed transactions. So fully committed
       xid sequence is passed in this branch without any action.
     */
-    if (!truncate_validated && binlog_truncate_coord.second > 0)
-    {
-      binlog_truncate_coord.second= 0;
-      truncate_reset_done= true;
-    }
+    if (!truncate_validated)
+      reset_truncate_coord(pos);
   }
 
   return false;
@@ -10483,7 +10517,7 @@ void Recovery_context::update_binlog_unsafe_coord(LOG_INFO *linfo)
     return;
 
   if (binlog_truncate_coord.second == 0 ||
-      last_gtid_coord > binlog_truncate_coord)
+      last_gtid_coord >= binlog_truncate_coord)
   {
     /*
       Potentially unsafe when the truncate coordinate is not determined,
@@ -10522,7 +10556,14 @@ void Recovery_context::process_gtid(int round, Gtid_log_event *gev,
 
     last_gtid_standalone=
       (gev->flags2 & Gtid_log_event::FL_STANDALONE) ? true : false;
-   /* Update the binlog state with any 'valid' GTID logged after Gtid_list. */
+    if (do_truncate && last_gtid_standalone &&
+        (binlog_truncate_coord.second == 0 ||
+         last_gtid_coord > binlog_truncate_coord))
+    {
+      binlog_unsafe_coord= last_gtid_coord;
+      strmake_buf(binlog_unsafe_file_name, linfo->log_file_name);
+    }
+    /* Update the binlog state with any 'valid' GTID logged after Gtid_list. */
     last_gtid_valid= true;    // may flip at Xid when falls to truncate
   }
 }
@@ -10576,11 +10617,8 @@ int Recovery_context::next_binlog_or_round(int& round,
       DBUG_ASSERT(do_truncate);
       /*
         the last binlog file, having truncate_reset_done to indicate
-        correction affected member->in_engine_prepare to reflect
+        needed correction to member->decided_to_commit to reflect
         changed binlog_truncate_pos.
-        The pair of
-        (id_binlog,binlog_truncate_pos) defines the truncate coordinate
-        accross the binlog sequence of offsets.
       */
       truncate_reset_done= false;
       truncate_validated= true;
@@ -10737,10 +10775,10 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
 #ifndef HAVE_REPLICATION
         {
           if (member)
-            member->in_engine_prepare= 0; // destined to commit
+            member->decided_to_commit= true;
         }
 #else
-        if (ctx.decide_or_assess(member, round, fdle, linfo))
+        if (ctx.decide_or_assess(member, round, fdle, linfo, ev->log_pos))
           goto err2;
 #endif
       }
@@ -10897,8 +10935,15 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
       ha_recover_binlog_truncate_complete(&xids);
 #else
     if (binlog_checkpoint_found && ctx.is_safe())
-      ha_recover_binlog_truncate_complete(&xids);
-
+    {
+      uint count_in_prepare= ha_recover_binlog_truncate_complete(&xids);
+      if (count_in_prepare > 0)
+      {
+        sql_print_error("Could not complete %u number of transactions in engines, "
+                        "Aborting.", count_in_prepare);
+        goto err2;
+      }
+    }
     if (ctx.complete(this))
       goto err2;
 #endif

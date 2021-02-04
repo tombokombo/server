@@ -2003,6 +2003,8 @@ xid_member_insert(HASH *hash_arg, my_xid xid_arg, MEM_ROOT *ptr_mem_root)
 
   member->xid= xid_arg;
   member->in_engine_prepare= 1;
+  member->decided_to_commit= false;
+
   return my_hash_insert(hash_arg, (uchar*) member) ? NULL : member;
 }
 
@@ -2039,10 +2041,36 @@ static my_bool xarecover_do_commit_or_rollback(void *member_arg,
   my_bool rc;
 
   x.set(member->xid);
-  rc= member->in_engine_prepare > 0 ?
-    hton->rollback_by_xid(hton, &x) : hton->commit_by_xid(hton, &x);
+  rc= member->decided_to_commit ?  hton->commit_by_xid(hton, &x) :
+    hton->rollback_by_xid(hton, &x);
 
-  return rc;
+  DBUG_ASSERT(rc || member->in_engine_prepare > 0);
+
+  if (!rc)
+  {
+    member->in_engine_prepare--;
+    if (global_system_variables.log_warnings > 2)
+      sql_print_warning("%s transaction with xid %ull",
+                        member->decided_to_commit ?
+                        "Committed" : "Rolled back", (ulonglong) member->xid);
+  }
+
+  return false;
+}
+
+static my_bool xarecover_do_count_in_prepare(void *member_arg,
+                                          void *ptr_count)
+{
+  xid_recovery_member *member= (xid_recovery_member*) member_arg;
+  if (member->in_engine_prepare)
+  {
+    *(uint*) ptr_count += member->in_engine_prepare;
+    if (global_system_variables.log_warnings > 1)
+      sql_print_warning("Found prepared transaction with xid %ull",
+                        (ulonglong) member->xid);
+  }
+
+  return false;
 }
 
 static my_bool xarecover_binlog_truncate_handlerton(THD *unused,
@@ -2059,10 +2087,15 @@ static my_bool xarecover_binlog_truncate_handlerton(THD *unused,
     return FALSE;
 }
 
-void ha_recover_binlog_truncate_complete(HASH *commit_list)
+uint ha_recover_binlog_truncate_complete(HASH *commit_list)
 {
+  uint count= 0;
+
   plugin_foreach(NULL, xarecover_binlog_truncate_handlerton,
                  MYSQL_STORAGE_ENGINE_PLUGIN, commit_list);
+  my_hash_iterate(commit_list, xarecover_do_count_in_prepare, &count);
+
+  return count;
 }
 
 static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
