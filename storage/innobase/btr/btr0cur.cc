@@ -69,6 +69,8 @@ Created 10/16/1994 Heikki Tuuri
 #include "dict0stats.h"
 #include "row0ins.h"
 
+#include "scope.h"
+
 /** Buffered B-tree operation types, introduced as part of delete buffering. */
 enum btr_op_t {
 	BTR_NO_OP = 0,			/*!< Not buffered */
@@ -6186,6 +6188,7 @@ btr_estimate_n_rows_in_range_low(
 
 	for (size_t i = 0; i < RETRIES; i++) {
 		mtr.start();
+		auto _ = make_scope_exit([&mtr]() { mtr.commit(); });
 
 		cursor.path_arr = path1;
 
@@ -6241,11 +6244,15 @@ btr_estimate_n_rows_in_range_low(
 			should_count_the_left_border = false;
 		}
 
-		tuple1->page_id= cursor.page_cur.block->page.id();
+		tuple1->page_id = cursor.page_cur.block->page.id();
 
-		mtr.commit();
+		buf_block_t* block = cursor.page_cur.block;
 
-		if (cursor.page_cur.block->page.status != buf_page_t::FREED) {
+		buf_block_t* bitmap = ibuf_bitmap_get_map_page(
+			tuple1->page_id, block->page.zip_size(), &mtr);
+
+		if (block && block->page.status != buf_page_t::FREED
+		    && bitmap) {
 			break;
 		}
 	}
@@ -6258,6 +6265,7 @@ btr_estimate_n_rows_in_range_low(
 
 	for (size_t i = 0; i < RETRIES; i++) {
 		mtr.start();
+		auto _ = make_scope_exit([&mtr]() { mtr.commit(); });
 
 		cursor.path_arr = path2;
 
@@ -6329,9 +6337,13 @@ btr_estimate_n_rows_in_range_low(
 
 		tuple2->page_id = cursor.page_cur.block->page.id();
 
-		mtr.commit();
+		buf_block_t* block = cursor.page_cur.block;
 
-		if (cursor.page_cur.block->page.status != buf_page_t::FREED) {
+		buf_block_t* bitmap = ibuf_bitmap_get_map_page(
+			tuple1->page_id, block->page.zip_size(), &mtr);
+
+		if (block && block->page.status != buf_page_t::FREED
+		    && bitmap) {
 			break;
 		}
 	}

@@ -402,6 +402,21 @@ for the file segment from which the pages for the ibuf tree are allocated */
 /* The insert buffer tree itself is always located in space 0. */
 #define IBUF_SPACE_ID		static_cast<ulint>(0)
 
+/** Gets the ibuf bitmap page where the bits describing a given file page are
+stored.
+@param[in]	page_id		page id of the file page
+@param[in]	zip_size	ROW_FORMAT=COMPRESSED page size, or 0
+@param[in,out]	mtr		mini-transaction
+@return bitmap page where the file page is mapped, that is, the bitmap
+page containing the descriptor bits for the file page; the bitmap page
+is x-latched */
+buf_block_t*
+ibuf_bitmap_get_map_page(
+	const page_id_t		page_id,
+	ulint			zip_size,
+	mtr_t*			mtr);
+
+
 #include "ibuf0ibuf.ic"
 
 #endif

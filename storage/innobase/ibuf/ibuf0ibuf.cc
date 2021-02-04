@@ -660,7 +660,6 @@ stored.
 @return bitmap page where the file page is mapped, that is, the bitmap
 page containing the descriptor bits for the file page; the bitmap page
 is x-latched */
-static
 buf_block_t*
 ibuf_bitmap_get_map_page(
 	const page_id_t		page_id,
