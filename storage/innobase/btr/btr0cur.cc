@@ -6245,7 +6245,7 @@ btr_estimate_n_rows_in_range_low(
 
 		mtr.commit();
 
-		if (cursor.page_cur.block->page.status == buf_page_t::NORMAL) {
+		if (cursor.page_cur.block->page.status != buf_page_t::FREED) {
 			break;
 		}
 	}
@@ -6331,7 +6331,7 @@ btr_estimate_n_rows_in_range_low(
 
 		mtr.commit();
 
-		if (cursor.page_cur.block->page.status == buf_page_t::NORMAL) {
+		if (cursor.page_cur.block->page.status != buf_page_t::FREED) {
 			break;
 		}
 	}
