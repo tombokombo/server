@@ -779,3 +779,45 @@ SET sql_mode=DEFAULT;
 --echo #
 --echo # End of 10.4 tests
 --echo #
+
+
+--echo #
+--echo # Start of 10.5 tests
+--echo #
+
+--echo #
+--echo # MDEV-24790 CAST('0e1111111111' AS DECIMAL(38,0)) returns a wrong result
+--echo #
+
+SELECT CAST('0e111111111' AS DECIMAL(38,0)) AS a;
+SELECT CAST('0e1111111111' AS DECIMAL(38,0)) AS a;
+SELECT CAST('.00000000000000000000000000000000000001e111111111111111111111' AS DECIMAL(38,0)) AS a;
+
+CREATE TABLE t1 (str VARCHAR(128), comment VARCHAR(128));
+INSERT INTO t1 VALUES
+('0e111111111111111111111', 'Zero mantissa and a huge positive exponent'),
+('1e111111111111111111111', 'Non-zero mantissa, huge positive exponent'),
+('0e-111111111111111111111', 'Zero mantissa and a huge negative exponent'),
+('1e-111111111111111111111', 'Non-zero mantissa and a huge negative exponent');
+
+# The loop below issues SHOW WARNINGS manually, disable automatic warnings
+--disable_warnings
+DELIMITER $$;
+FOR rec IN (SELECT str, comment FROM t1 ORDER BY str)
+DO
+  SELECT rec.str AS `--------`, rec.comment AS `--------`;
+  SELECT CAST(str AS DECIMAL(38,0)) FROM t1 WHERE str=rec.str;
+  SHOW WARNINGS;
+  SELECT CAST(CONCAT(str,'garbage') AS DECIMAL(38,0)) FROM t1 WHERE str=rec.str;
+  SHOW WARNINGS;
+END FOR;
+$$
+DELIMITER ;$$
+--enable_warnings
+
+
+DROP TABLE t1;
+
+--echo #
+--echo # End of 10.5 tests
+--echo #
