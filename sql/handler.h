@@ -4823,7 +4823,7 @@ int ha_commit_trans(THD *thd, bool all);
 int ha_rollback_trans(THD *thd, bool all);
 int ha_prepare(THD *thd);
 int ha_recover(HASH *commit_list, MEM_ROOT *mem_root= NULL);
-uint ha_recover_binlog_truncate_complete(HASH *commit_list);
+uint ha_recover_complete(HASH *commit_list);
 
 /* transactions: these functions never call handlerton functions directly */
 int ha_enable_transaction(THD *thd, bool on);

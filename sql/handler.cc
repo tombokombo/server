@@ -2050,7 +2050,7 @@ static my_bool xarecover_do_commit_or_rollback(void *member_arg,
   {
     member->in_engine_prepare--;
     if (global_system_variables.log_warnings > 2)
-      sql_print_warning("%s transaction with xid %ull",
+      sql_print_warning("%s transaction with xid %llu",
                         member->decided_to_commit ?
                         "Committed" : "Rolled back", (ulonglong) member->xid);
   }
@@ -2066,7 +2066,7 @@ static my_bool xarecover_do_count_in_prepare(void *member_arg,
   {
     *(uint*) ptr_count += member->in_engine_prepare;
     if (global_system_variables.log_warnings > 1)
-      sql_print_warning("Found prepared transaction with xid %ull",
+      sql_print_warning("Found prepared transaction with xid %llu",
                         (ulonglong) member->xid);
   }
 
@@ -2087,7 +2087,7 @@ static my_bool xarecover_binlog_truncate_handlerton(THD *unused,
     return FALSE;
 }
 
-uint ha_recover_binlog_truncate_complete(HASH *commit_list)
+uint ha_recover_complete(HASH *commit_list)
 {
   uint count= 0;
 
@@ -2104,6 +2104,9 @@ static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
   handlerton *hton= plugin_hton(plugin);
   struct xarecover_st *info= (struct xarecover_st *) arg;
   int got;
+#ifndef DBUG_OFF
+  static my_xid dbug_xid_list[100] __attribute__((unused)) = {10,12,14,15,17,20,22,24,25,27};
+#endif
 
   if (info->error)
     return TRUE;

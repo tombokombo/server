@@ -10240,7 +10240,7 @@ public:
     The rest of declarations deal with this type of recovery.
   */
   bool do_truncate;
-  rpl_gtid truncate_gtid;
+  rpl_gtid binlog_unsafe_gtid, truncate_gtid;
   char binlog_truncate_file_name[FN_REFLEN] ;
   char binlog_unsafe_file_name[FN_REFLEN] ;
   /*
@@ -10266,6 +10266,14 @@ public:
   bool truncate_reset_done; // trued when the position is to reevaluate
   /* Flags the fact of truncate position estimation is done the 1st round */
   bool truncate_set_in_1st;
+  /*
+    Monotonically indexes binlog files in the recovery list.
+    When the list is "likely" singleton the value is UINT_MAX.
+    Otherwise enumeration starts with zero for the first file, increments
+    by one for any next file except for the last file in the list, which
+    is also the initial binlog file for recovery,
+    that is enumberated with UINT_MAX.
+  */
   uint id_binlog;
   enum_binlog_checksum_alg cs_alg; // for Stop_event with do_truncate
   bool single_binlog;
@@ -10284,22 +10292,31 @@ public:
   bool is_safe()
   {
     return !do_truncate ? true :
-      (binlog_truncate_coord.second == 0 || binlog_unsafe_coord.second == 0) ?
-      true :
-      binlog_unsafe_coord < binlog_truncate_coord ? true : false;
+      (truncate_gtid.seq_no == 0 ||                    // no truncate
+       binlog_unsafe_coord < binlog_truncate_coord);   // or unsafe is earlier
   }
-  bool complete(MYSQL_BIN_LOG *log);
-  void update_binlog_unsafe_coord(LOG_INFO *linfo);
+  bool complete(MYSQL_BIN_LOG *log, HASH &xids);
+  void update_binlog_unsafe_coord_if_needed(LOG_INFO *linfo);
   void reset_truncate_coord(my_off_t pos);
   void set_truncate_coord(LOG_INFO *linfo, int round,
                           enum_binlog_checksum_alg fd_cs_alg);
 };
 
-bool Recovery_context::complete(MYSQL_BIN_LOG *log)
+bool Recovery_context::complete(MYSQL_BIN_LOG *log, HASH &xids)
 {
-  if (do_truncate && binlog_truncate_coord.second &&
-      /* Truncation is not done when there's no transaction to roll back */
-      truncate_gtid.seq_no > 0)
+  if (!do_truncate || is_safe())
+  {
+    uint count_in_prepare= ha_recover_complete(&xids);
+    if (count_in_prepare > 0)
+    {
+      sql_print_error("Could not complete %u number of transactions in engines, "
+                      "Aborting.", count_in_prepare);
+      return true;
+    }
+  }
+
+  /* Truncation is not done when there's no transaction to roll back */
+  if (do_truncate && truncate_gtid.seq_no > 0)
   {
     if (is_safe())
     {
@@ -10345,13 +10362,16 @@ Recovery_context::Recovery_context() :
   binlog_unsafe_coord= std::pair<uint,my_off_t>(0,0);
   binlog_truncate_file_name[0]= 0;
   binlog_unsafe_file_name  [0]= 0;
+  binlog_unsafe_gtid= truncate_gtid= rpl_gtid();
 }
 
-/*
+/**
   Is called when a committed or to-be-committed transaction is detected.
-  truncate_gtid is set to "nil" with its rpl_gtid::seq_no := 0.
-  truncate_reset_done remembers the fact of that has been done at least
-  once in the current round.
+  @c truncate_gtid is set to "nil" with its @c rpl_gtid::seq_no := 0.
+  @c truncate_reset_done remembers the fact of that has been done at least
+     once in the current round;
+  @c binlog_truncate_coord is "suggested" to a next group start to indicate
+     the actual settled value must be at most as the last suggested one.
 */
 void Recovery_context::reset_truncate_coord(my_off_t pos)
 {
@@ -10359,7 +10379,7 @@ void Recovery_context::reset_truncate_coord(my_off_t pos)
               last_gtid_coord >= binlog_truncate_coord ||
               truncate_set_in_1st);
 
-  //binlog_truncate_coord= std::pair<uint,my_off_t>(id_binlog, pos);
+  binlog_truncate_coord= std::pair<uint,my_off_t>(id_binlog, pos);
   truncate_gtid= rpl_gtid();
   truncate_reset_done= true;
 }
@@ -10377,7 +10397,6 @@ void Recovery_context::set_truncate_coord(LOG_INFO *linfo, int round,
   strmake_buf(binlog_truncate_file_name, linfo->log_file_name);
 
   truncate_gtid= last_gtid;
-  last_gtid_valid= false;       // may still (see gtid) flip later
   cs_alg= fd_cs_alg;
   truncate_set_in_1st= (round == 1);
 }
@@ -10454,14 +10473,15 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
         {
           DBUG_ASSERT(round <= 2);
           /*
-            Either binlog_truncate_pos not set, or
-            it gets incremented within the current round, or
-            it's "improved" after being set in the 1st round.
+            Either truncate was not set or was reset, else
+            it gets incremented, otherwise it may only set to an earlier
+            offset only at the turn out of the 1st round.
           */
-          DBUG_ASSERT(binlog_truncate_coord.second == 0 ||
+          DBUG_ASSERT(truncate_gtid.seq_no == 0 ||
                       last_gtid_coord >= binlog_truncate_coord ||
                       (round == 2 && truncate_set_in_1st));
-          /* [G_1]?,[U]*,[u]*,g_k^last \cap !( g_1,[Uu]*, g_k^last */
+
+          last_gtid_valid= false;       // may still (see gtid) flip later
           if (truncate_gtid.seq_no == 0 /* was reset or never set */ ||
               (truncate_set_in_1st && round == 2 /* reevaluted at round turn */))
             set_truncate_coord(linfo, round, fdle->checksum_alg);
@@ -10503,33 +10523,33 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
 }
 
 /*
-  Is invoked when a non-2pc group is detected by its terminal event.
-  It is "normally" unsafe truncate for the semisync-slave recovery so
-  the maximum unsafe coordinate is updated when applies.
-  In which case, *exeptionally*,
-  the no-engine group is just invalidated to not contribute to binlog state
-  and resets its marking as non-2pc.
+  Is invoked when a standalone or non-2pc group is detected.
+  Both are unsafe to truncate in the semisync-slave recovery so
+  the maximum unsafe coordinate may be updated.
+  In the non-2pc group case though, *exeptionally*,
+  the no-engine group is considered safe, to be invalidated
+  to not contribute to binlog state.
 */
-void Recovery_context::update_binlog_unsafe_coord(LOG_INFO *linfo)
+void Recovery_context::update_binlog_unsafe_coord_if_needed(LOG_INFO *linfo)
 {
-  last_gtid_no2pc= true;
   if (!do_truncate)
     return;
 
-  if (binlog_truncate_coord.second == 0 ||
-      last_gtid_coord >= binlog_truncate_coord)
+  if (truncate_gtid.seq_no > 0 &&   // g1,U2, *not* G1,U2
+      last_gtid_coord > binlog_truncate_coord)
   {
+    DBUG_ASSERT(binlog_truncate_coord.second > 0);
     /*
       Potentially unsafe when the truncate coordinate is not determined,
       just detected as unsafe when behind the latter.
     */
     if (last_gtid_engines == 0)
     {
-      if (binlog_truncate_coord.second > 0)
         last_gtid_valid= false;
     }
     else
     {
+      binlog_unsafe_gtid= last_gtid;
       binlog_unsafe_coord= last_gtid_coord;
       strmake_buf(binlog_unsafe_file_name, linfo->log_file_name);
     }
@@ -10551,18 +10571,13 @@ void Recovery_context::process_gtid(int round, Gtid_log_event *gev,
   last_gtid_coord= std::pair<uint,my_off_t>(id_binlog, prev_event_pos);
   if (round == 1 || do_truncate)
   {
-    DBUG_ASSERT(!last_gtid_no2pc);
     DBUG_ASSERT(!last_gtid_valid);
 
+    last_gtid_no2pc= false;
     last_gtid_standalone=
       (gev->flags2 & Gtid_log_event::FL_STANDALONE) ? true : false;
-    if (do_truncate && last_gtid_standalone &&
-        (binlog_truncate_coord.second == 0 ||
-         last_gtid_coord > binlog_truncate_coord))
-    {
-      binlog_unsafe_coord= last_gtid_coord;
-      strmake_buf(binlog_unsafe_file_name, linfo->log_file_name);
-    }
+    if (do_truncate && last_gtid_standalone)
+      update_binlog_unsafe_coord_if_needed(linfo);
     /* Update the binlog state with any 'valid' GTID logged after Gtid_list. */
     last_gtid_valid= true;    // may flip at Xid when falls to truncate
   }
@@ -10713,7 +10728,8 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
     in the "normal" non-semisync-slave configuration, and then the loop is
     done at this point. Otherwise in the semisync slave case it may be parsed
     over again. The 2nd round may turn to a third in "unlikely" condition of the
-    semisync-slave is being recovered having multi-engine transactions in doubt.
+    semisync-slave is being recovered having multi- or different engine
+    transactions in doubt.
   */
   int round;
 
@@ -10810,8 +10826,8 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
                            (ctx.id_binlog == 0 || ctx.single_binlog)))
         {
           /*
-            In do_truncate the initial state is in the first binlog file of the
-            recovery list. The signleton list features ctx.id_binlog == UINT_MAX.
+            Unlike the normal case, in do_truncate the initial state is
+            in the first binlog file of the recovery list.
           */
           DBUG_ASSERT(!ctx.do_truncate || !ctx.single_binlog ||
                       ctx.id_binlog == UINT_MAX);
@@ -10832,7 +10848,8 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
         if (((Query_log_event *)ev)->is_commit() ||
             ((Query_log_event *)ev)->is_rollback())
         {
-          ctx.update_binlog_unsafe_coord(linfo);
+          ctx.last_gtid_no2pc= true;
+          ctx.update_binlog_unsafe_coord_if_needed(linfo);
         }
         break;
 #endif
@@ -10866,8 +10883,6 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
           goto err2;
         ctx.last_gtid_valid= false;
       }
-      if (ctx.last_gtid_no2pc)
-        ctx.last_gtid_no2pc= false;
       ctx.prev_event_pos= ev->log_pos;
 #endif
       if (typ != FORMAT_DESCRIPTION_EVENT)
@@ -10930,23 +10945,15 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
 
   if (do_xa)
   {
-#ifndef HAVE_REPLICATION
     if (binlog_checkpoint_found)
-      ha_recover_binlog_truncate_complete(&xids);
-#else
-    if (binlog_checkpoint_found && ctx.is_safe())
     {
-      uint count_in_prepare= ha_recover_binlog_truncate_complete(&xids);
-      if (count_in_prepare > 0)
-      {
-        sql_print_error("Could not complete %u number of transactions in engines, "
-                        "Aborting.", count_in_prepare);
-        goto err2;
-      }
-    }
-    if (ctx.complete(this))
-      goto err2;
+#ifndef HAVE_REPLICATION
+      if (ha_recover_complete(&xids))
+#else
+      if (ctx.complete(this, xids))
 #endif
+        goto err2;
+    }
     free_root(&mem_root, MYF(0));
     my_hash_free(&xids);
   }
