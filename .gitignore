@@ -600,3 +600,7 @@ tests/mariadb-client-test
 versioninfo_dll.rc
 versioninfo_exe.rc
 win/packaging/ca/symlinks.cc
+mysql-test/mysql-stress-test.pl
+mysql-test/mysql-test-run
+mysql-test/mysql-test-run.pl
+mysql-test/mtr
