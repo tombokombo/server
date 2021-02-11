@@ -7626,7 +7626,7 @@ MYSQL_BIN_LOG::write_transaction_to_binlog(THD *thd,
       entry.need_unlog= true;
     break;
   }
-
+  entry.not_flushed_yet= true;
   entry.end_event= end_ev;
   if (cache_mngr->stmt_cache.has_incident() ||
       cache_mngr->trx_cache.has_incident())
@@ -8021,8 +8021,15 @@ MYSQL_BIN_LOG::write_transaction_to_binlog_events(group_commit_entry *entry)
   else if (!entry->queued_by_other)
   {
     DEBUG_SYNC(entry->thd, "after_semisync_queue");
-
-    entry->thd->wait_for_wakeup_ready();
+    if (!opt_optimize_thread_scheduling)
+    {
+      mysql_mutex_lock(&LOCK_prepare_ordered);
+      while (entry->not_flushed_yet)
+        mysql_cond_wait(&COND_queue_busy, &LOCK_prepare_ordered);
+      mysql_mutex_unlock(&LOCK_prepare_ordered);
+    }
+    else
+      entry->thd->wait_for_wakeup_ready();
   }
   else
   {
@@ -8031,58 +8038,17 @@ MYSQL_BIN_LOG::write_transaction_to_binlog_events(group_commit_entry *entry)
       only when the leader has already completed the commit for us.
       So nothing to do here then.
     */
+    DBUG_ASSERT(0);
   }
 
   if (!opt_optimize_thread_scheduling)
   {
-    /* For the leader, trx_group_commit_leader() already took the lock. */
-    if (!is_leader)
-      mysql_mutex_lock(&LOCK_commit_ordered);
 
+    /* For the leader, trx_group_commit_leader() already took the lock. */
     DEBUG_SYNC(entry->thd, "commit_loop_entry_commit_ordered");
     ++num_commits;
     if (entry->cache_mngr->using_xa && !entry->error)
       run_commit_ordered(entry->thd, entry->all);
-
-    group_commit_entry *next= entry->next;
-    if (!next)
-    {
-      group_commit_queue_busy= FALSE;
-      mysql_cond_signal(&COND_queue_busy);
-      DEBUG_SYNC(entry->thd, "commit_after_group_run_commit_ordered");
-    }
-    mysql_mutex_unlock(&LOCK_commit_ordered);
-    entry->thd->wakeup_subsequent_commits(entry->error);
-
-    if (next)
-    {
-      /*
-        Wake up the next thread in the group commit.
-
-        The next thread can be waiting in two different ways, depending on
-        whether it put itself in the queue, or if it was put in queue by us
-        because it had to wait for us to commit first.
-
-        So execute the appropriate wakeup, identified by the queued_by_other
-        field.
-      */
-      if (next->queued_by_other)
-        next->thd->wait_for_commit_ptr->wakeup(entry->error);
-      else
-        next->thd->signal_wakeup_ready();
-    }
-    else
-    {
-      /*
-        If we rotated the binlog, and if we are using the unoptimized thread
-        scheduling where every thread runs its own commit_ordered(), then we
-        must do the commit checkpoint and log purge here, after all
-        commit_ordered() calls have finished, and locks have been released.
-      */
-      if (entry->check_purge)
-        checkpoint_and_purge(entry->binlog_id);
-    }
-
   }
 
   if (likely(!entry->error))
@@ -8227,6 +8193,9 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
                                                               commit_id))))
         current->commit_errno= errno;
 
+      if (!opt_optimize_thread_scheduling)
+        current->not_flushed_yet= false;
+
       strmake_buf(cache_mngr->last_commit_pos_file, log_file_name);
       commit_offset= my_b_write_tell(&log_file);
       cache_mngr->last_commit_pos_offset= commit_offset;
@@ -8252,6 +8221,13 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
     }
     set_current_thd(leader->thd);
 
+    if (!opt_optimize_thread_scheduling)
+    {
+      mysql_mutex_lock(&LOCK_prepare_ordered);
+      mysql_cond_broadcast(&COND_queue_busy);
+      mysql_mutex_unlock(&LOCK_prepare_ordered);
+    }
+
     bool synced= 0;
     if (unlikely(flush_and_sync(&synced)))
     {
@@ -8265,7 +8241,7 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
         }
       }
     }
-    else
+    else if (opt_optimize_thread_scheduling)
     {
       bool any_error= false;
 
@@ -8378,7 +8354,8 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
   }
 
   DEBUG_SYNC(leader->thd, "commit_before_get_LOCK_commit_ordered");
-  mysql_mutex_lock(&LOCK_commit_ordered);
+  if (opt_optimize_thread_scheduling)
+    mysql_mutex_lock(&LOCK_commit_ordered);
   last_commit_pos_offset= commit_offset;
 
   /*
@@ -8400,9 +8377,9 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
       thread from the one that locked it.
     */
 
-    while (group_commit_queue_busy)
-      mysql_cond_wait(&COND_queue_busy, &LOCK_commit_ordered);
-    group_commit_queue_busy= TRUE;
+    // while (group_commit_queue_busy)
+    //   mysql_cond_wait(&COND_queue_busy, &LOCK_commit_ordered);
+    // group_commit_queue_busy= TRUE;
 
     /*
       Set these so parent can run checkpoint_and_purge() in last thread.
@@ -8410,8 +8387,8 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
       in this function, so parent does not need to and we need not set these
       values).
     */
-    last_in_queue->check_purge= check_purge;
-    last_in_queue->binlog_id= binlog_id;
+    //last_in_queue->check_purge= check_purge;
+    //last_in_queue->binlog_id= binlog_id;
 
     /* Note that we return with LOCK_commit_ordered locked! */
     DBUG_VOID_RETURN;
@@ -9190,7 +9167,8 @@ TC_LOG::run_commit_ordered(THD *thd, bool all)
   Ha_trx_info *ha_info=
     all ? thd->transaction->all.ha_list : thd->transaction->stmt.ha_list;
 
-  mysql_mutex_assert_owner(&LOCK_commit_ordered);
+  if (opt_optimize_thread_scheduling)
+    mysql_mutex_assert_owner(&LOCK_commit_ordered);
   for (; ha_info; ha_info= ha_info->next())
   {
     handlerton *ht= ha_info->ht();

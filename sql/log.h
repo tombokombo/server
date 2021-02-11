@@ -477,6 +477,7 @@ class MYSQL_BIN_LOG: public TC_LOG, private MYSQL_LOG
     /* Flag used to optimise around wait_for_prior_commit. */
     bool queued_by_other;
     ulong binlog_id;
+    bool not_flushed_yet;
   };
 
   /*
