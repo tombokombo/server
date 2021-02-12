@@ -101,7 +101,7 @@ static int binlog_flush_cache(THD *thd, binlog_cache_mngr *cache_mngr,
 static const LEX_CSTRING write_error_msg=
     { STRING_WITH_LEN("error writing to the binary log") };
 
-static my_bool opt_optimize_thread_scheduling= TRUE;
+my_bool opt_optimize_thread_scheduling= TRUE;
 ulong binlog_checksum_options;
 #ifndef DBUG_OFF
 ulong opt_binlog_dbug_fsync_sleep= 0;
@@ -8047,8 +8047,8 @@ MYSQL_BIN_LOG::write_transaction_to_binlog_events(group_commit_entry *entry)
     /* For the leader, trx_group_commit_leader() already took the lock. */
     DEBUG_SYNC(entry->thd, "commit_loop_entry_commit_ordered");
     ++num_commits;
-    if (entry->cache_mngr->using_xa && !entry->error)
-      run_commit_ordered(entry->thd, entry->all);
+    //if (entry->cache_mngr->using_xa && !entry->error)
+    //  run_commit_ordered(entry->thd, entry->all);
   }
 
   if (likely(!entry->error))
@@ -8330,6 +8330,7 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
   /*
     Loop through threads and run the binlog_sync hook
   */
+  if (opt_optimize_thread_scheduling)
   {
     mysql_mutex_assert_not_owner(&LOCK_prepare_ordered);
     mysql_mutex_assert_not_owner(&LOCK_log);

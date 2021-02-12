@@ -1511,7 +1511,7 @@ ha_check_and_coalesce_trx_read_only(THD *thd, Ha_trx_info *ha_list,
   return rw_ha_count;
 }
 
-
+extern my_bool opt_optimize_thread_scheduling;
 /**
   @retval
     0   ok
@@ -1696,7 +1696,7 @@ int ha_commit_trans(THD *thd, bool all)
   }
 #endif
 
-  if (trans->no_2pc || (rw_ha_count <= 1))
+  if (trans->no_2pc || (rw_ha_count <= 1) || !opt_optimize_thread_scheduling)
   {
 #ifdef WITH_WSREP
     /*
@@ -1711,7 +1711,11 @@ int ha_commit_trans(THD *thd, bool all)
       goto wsrep_err;
     }
 #endif /* WITH_WSREP */
+    xid= thd->transaction->implicit_xid.quick_get_my_xid();
+    cookie= !tc_log || xid == 0 ? 0 : tc_log->log_and_order(thd, xid, all, false, false);
     error= ha_commit_one_phase(thd, all);
+    if (tc_log)
+      tc_log->unlog(cookie, xid);
 #ifdef WITH_WSREP
     // Here in case of error we must return 2 for inconsistency
     if (run_wsrep_hooks && !error)
