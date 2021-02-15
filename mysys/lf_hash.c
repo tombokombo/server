@@ -31,10 +31,10 @@
 
 /* An element of the list */
 typedef struct {
-  intptr volatile link; /* a pointer to the next element in a list and a flag */
-  uint32 hashnr;        /* reversed hash number, for sorting                 */
+  intptr link;   /* a pointer to the next element in a list and a flag */
   const uchar *key;
   size_t keylen;
+  uint32 hashnr; /* reversed hash number, for sorting */
   /*
     data is stored here, directly after the keylen.
     thus the pointer to data is (void*)(slist_element_ptr+1)
@@ -48,7 +48,7 @@ const int LF_HASH_OVERHEAD= sizeof(LF_SLIST);
   in a list) from l_find to l_insert/l_delete
 */
 typedef struct {
-  intptr volatile *prev;
+  intptr *prev;
   LF_SLIST *curr, *next;
 } CURSOR;
 
