@@ -172,6 +172,78 @@ extern void *my_multi_malloc(myf MyFlags, ...);
 extern void *my_multi_malloc_large(myf MyFlags, ...);
 extern void *my_realloc(void *oldpoint, size_t Size, myf MyFlags);
 extern void my_free(void *ptr);
+
+
+/**
+  Allocate an aligned block of memory.
+
+  @param size      The size of the memory block in bytes.
+  @param alignment The alignment of the memory block in bytes.
+
+  @return A pointer to the allocated memory block, or NULL on failure.
+*/
+static inline void *my_malloc_aligned(size_t size, size_t alignment)
+{
+  void *ptr;
+  DBUG_ENTER("my_malloc_aligned");
+  DBUG_PRINT("my",("size: %zu align: %zu", size, alignment));
+
+#ifdef _MSC_VER
+  /* Windows */
+  ptr= _aligned_malloc(size, alignment);
+#else
+  /* Linux + BSDs */
+  if (posix_memalign(& ptr, alignment, size))
+    DBUG_RETURN(NULL);
+#endif
+  DBUG_ASSERT(alignment && !(alignment & (alignment - 1)));
+  DBUG_ASSERT(((size_t)ptr) % alignment == 0);
+
+  DBUG_RETURN(ptr);
+}
+
+/**
+  Allocate an aligned block of zero initialized memory.
+
+  @param size      The size of the memory block in bytes.
+  @param alignment The alignment of the memory block in bytes.
+
+  @return A pointer to the allocated memory block, or NULL on failure.
+*/
+static inline void *my_calloc_aligned(size_t size, size_t alignment)
+{
+  void *ptr;
+  DBUG_ENTER("my_calloc_aligned");
+  DBUG_PRINT("my",("size: %zu align: %zu", size, alignment));
+  ptr= my_malloc_aligned(size, alignment);
+  if (ptr)
+  {
+    memset(ptr, 0, size);
+  }
+
+  DBUG_RETURN(ptr);
+}
+
+/**
+  Free memory allocated with my_malloc_aligned
+
+  @param ptr Pointer to the memory allocated by my_malloc_aligned.
+*/
+static inline void my_free_aligned(void *ptr)
+{
+  DBUG_ENTER("my_free_aligned");
+  DBUG_PRINT("my",("ptr: %p", ptr));
+  if (ptr == NULL)
+    DBUG_VOID_RETURN;
+
+#ifdef _MSC_VER
+  _aligned_free(ptr);
+#else
+  free(ptr);
+#endif
+  DBUG_VOID_RETURN;
+}
+
 extern void *my_memdup(const void *from,size_t length,myf MyFlags);
 extern char *my_strdup(const char *from,myf MyFlags);
 extern char *my_strndup(const char *from, size_t length, myf MyFlags);

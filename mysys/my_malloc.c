@@ -256,4 +256,3 @@ char *my_strndup(const char *from, size_t length, myf my_flags)
   }
   DBUG_RETURN(ptr);
 }
-
