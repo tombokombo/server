@@ -214,7 +214,7 @@ static enum lockman_getlock_result getlock_result[10][10]=
 typedef struct lockman_lock {
   uint64 resource;
   struct lockman_lock  *lonext;
-  intptr volatile link;
+  intptr link;
   uint32 hashnr;
   /* QQ: TODO - remove hashnr from LOCK */
   uint16 loid;
@@ -227,7 +227,7 @@ typedef struct lockman_lock {
 #define ACTIVE                  4
 
 typedef struct {
-  intptr volatile *prev;
+  intptr *prev;
   LOCK *curr, *next;
   LOCK *blocker, *upgrade_from;
 } CURSOR;
@@ -240,7 +240,7 @@ typedef struct {
     cursor is positioned in either case
     pins[0..3] are used, they are NOT removed on return
 */
-static int lockfind(LOCK * volatile *head, LOCK *node,
+static int lockfind(LOCK **head, LOCK *node,
                     CURSOR *cursor, LF_PINS *pins)
 {
   uint32        hashnr, cur_hashnr;
@@ -397,7 +397,7 @@ retry:
   NOTE
     it uses pins[0..3], on return pins 0..2 are removed, pin 3 (blocker) stays
 */
-static int lockinsert(LOCK * volatile *head, LOCK *node, LF_PINS *pins,
+static int lockinsert(LOCK **head, LOCK *node, LF_PINS *pins,
                       LOCK **blocker)
 {
   CURSOR         cursor;
@@ -453,7 +453,7 @@ static int lockinsert(LOCK * volatile *head, LOCK *node, LF_PINS *pins,
   NOTE
     it uses pins[0..3], on return pins 0..2 are removed, pin 3 (blocker) stays
 */
-static int lockpeek(LOCK * volatile *head, LOCK *node, LF_PINS *pins,
+static int lockpeek(LOCK **head, LOCK *node, LF_PINS *pins,
                     LOCK **blocker)
 {
   CURSOR         cursor;
@@ -475,7 +475,7 @@ static int lockpeek(LOCK * volatile *head, LOCK *node, LF_PINS *pins,
 
     One _must_ have the lock (or request) to call this
 */
-static int lockdelete(LOCK * volatile *head, LOCK *node, LF_PINS *pins)
+static int lockdelete(LOCK **head, LOCK *node, LF_PINS *pins)
 {
   CURSOR cursor;
   int res;
@@ -539,7 +539,7 @@ void lockman_destroy(LOCKMAN *lm)
     if (el->hashnr & 1)
       lf_alloc_direct_free(&lm->alloc, el);
     else
-      my_free((void *)el);
+      my_free_aligned((void *)el);
     el= (LOCK *)next;
   }
   lf_alloc_destroy(&lm->alloc);
@@ -549,14 +549,14 @@ void lockman_destroy(LOCKMAN *lm)
 /* TODO: optimize it */
 #define MAX_LOAD 1
 
-static void initialize_bucket(LOCKMAN *lm, LOCK * volatile *node,
+static void initialize_bucket(LOCKMAN *lm, LOCK **node,
                               uint bucket, LF_PINS *pins)
 {
   int res;
   uint parent= my_clear_highest_bit(bucket);
   LOCK *dummy= (LOCK *)my_malloc(sizeof(LOCK), MYF(MY_WME));
   LOCK **tmp= 0, *cur;
-  LOCK * volatile *el= lf_dynarray_lvalue(&lm->array, parent);
+  LOCK **el= lf_dynarray_lvalue(&lm->array, parent);
 
   if (*el == NULL && bucket)
     initialize_bucket(lm, el, parent, pins);
@@ -599,7 +599,7 @@ enum lockman_getlock_result lockman_getlock(LOCKMAN *lm, LOCK_OWNER *lo,
 {
   int res;
   uint csize, bucket, hashnr;
-  LOCK *node, * volatile *el, *blocker;
+  LOCK *node, **el, *blocker;
   LF_PINS *pins= lo->pins;
   enum lockman_lock_type old_lock;
 
@@ -717,7 +717,7 @@ enum lockman_getlock_result lockman_getlock(LOCKMAN *lm, LOCK_OWNER *lo,
 */
 int lockman_release_locks(LOCKMAN *lm, LOCK_OWNER *lo)
 {
-  LOCK * volatile *el, *node, *next;
+  LOCK **el, *node, *next;
   uint bucket;
   LF_PINS *pins= lo->pins;
 
