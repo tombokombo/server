@@ -549,7 +549,7 @@ buf_dblwr_process()
 	}
 
 	read_buf = static_cast<byte*>(
-		aligned_malloc(3 * srv_page_size, srv_page_size));
+		my_malloc_aligned(3 * srv_page_size, srv_page_size));
 	byte* const buf = read_buf + srv_page_size;
 
 	for (recv_dblwr_t::list::iterator i = recv_dblwr.pages.begin();
@@ -678,7 +678,7 @@ next_page:
 	recv_dblwr.pages.clear();
 
 	fil_flush_file_spaces(FIL_TYPE_TABLESPACE);
-	aligned_free(read_buf);
+	my_free_aligned(read_buf);
 }
 
 /****************************************************************//**

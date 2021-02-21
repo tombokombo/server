@@ -415,7 +415,7 @@ static void buf_tmp_reserve_crypt_buf(buf_tmp_buffer_t* slot)
 {
 	if (!slot->crypt_buf) {
 		slot->crypt_buf = static_cast<byte*>(
-			aligned_malloc(srv_page_size, srv_page_size));
+			my_malloc_aligned(srv_page_size, srv_page_size));
 	}
 }
 
@@ -434,7 +434,7 @@ static void buf_tmp_reserve_compression_buf(buf_tmp_buffer_t* slot)
 		size = snappy_max_compressed_length(size);
 #endif
 		slot->comp_buf = static_cast<byte*>(
-			aligned_malloc(size, srv_page_size));
+			my_malloc_aligned(size, srv_page_size));
 	}
 }
 
@@ -2023,12 +2023,12 @@ buf_pool_free_instance(
 		for(ulint i = 0; i < buf_pool->tmp_arr->n_slots; i++) {
 			buf_tmp_buffer_t* slot = &(buf_pool->tmp_arr->slots[i]);
 			if (slot && slot->crypt_buf) {
-				aligned_free(slot->crypt_buf);
+				my_free_aligned(slot->crypt_buf);
 				slot->crypt_buf = NULL;
 			}
 
 			if (slot && slot->comp_buf) {
-				aligned_free(slot->comp_buf);
+				my_free_aligned(slot->comp_buf);
 				slot->comp_buf = NULL;
 			}
 		}
