@@ -1623,6 +1623,9 @@ select * from (values ((values ((select a from t1 where a=7))))) dt;
 
 select * from (values ((values ((select (values(2)) from t1 where a=8))))) dt;
 
+insert into t1(a) values ((values (2))), ((values (3)));
+select * from t1;
+
 drop table t1;
 
 --echo End of 10.3 tests

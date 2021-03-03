@@ -8324,7 +8324,6 @@ void LEX::tvc_start()
     mysql_init_select(this);
   else
     save_values_list_state();
-  field_list.empty();
   many_values.empty();
   insert_list= 0;
 }
@@ -8336,7 +8335,6 @@ bool LEX::tvc_start_derived()
       unlikely(mysql_new_select(this, 1, NULL)))
     return true;
   save_values_list_state();
-  field_list.empty();
   many_values.empty();
   insert_list= 0;
   return false;
