@@ -18801,14 +18801,25 @@ static void bg_wsrep_kill_trx(
 	if (thd) {
 		wsrep_thd_LOCK(thd);
 		victim_trx = thd_to_trx(thd);
-		lock_mutex_enter();
-		trx_mutex_enter(victim_trx);
-		wsrep_thd_UNLOCK(thd);
-		if (victim_trx->id != arg->trx_id)
-		{
-			trx_mutex_exit(victim_trx);
-			lock_mutex_exit();
-			victim_trx = NULL;
+		/* Victim trx might not exists e.g. on MDL-conflict. */
+		if (victim_trx) {
+			lock_mutex_enter();
+			trx_mutex_enter(victim_trx);
+			wsrep_thd_UNLOCK(thd);
+			if (victim_trx->id != arg->trx_id ||
+			    victim_trx->state == TRX_STATE_COMMITTED_IN_MEMORY)
+			{
+				/* Victim was meanwhile rolled back or
+				committed */
+				trx_mutex_exit(victim_trx);
+				lock_mutex_exit();
+				victim_trx = NULL;
+				wsrep_thd_kill_UNLOCK(thd);
+			}
+		} else {
+			/* find_thread_by_id locked
+			THD::LOCK_thd_kill */
+			wsrep_thd_UNLOCK(thd);
 			wsrep_thd_kill_UNLOCK(thd);
 		}
 	}
