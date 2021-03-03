@@ -341,7 +341,7 @@ extern "C" void wsrep_report_bf_lock_wait(const THD *thd,
 {
   if (thd)
   {
-    WSREP_ERROR("Thread %s trx_id: %llu thread: %ld "
+    WSREP_INFO("Thread %s trx_id: %llu thread: %ld "
                 "seqno: %lld client_state: %s client_mode: %s transaction_mode: %s "
                 "applier: %d toi: %d local: %d "
                 "query: %s",
