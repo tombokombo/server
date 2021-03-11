@@ -88,6 +88,9 @@ template <typename Integral, size_t Size> class counter_broker_array;
 // collection of counters. In a nutshell it's just an array of std::atomics.
 // Counters can be incremented directly but when contention becomes a problem,
 // this counter can be distributed via counter_broker_array.
+
+// WARNING: use as a global variable only! Otherwise, deal with uninitialized
+// memory
 template <typename Integral, size_t Size> class distributable_counter_array
 {
   distributable_counter_array(const distributable_counter_array &)= delete;
@@ -102,8 +105,8 @@ public:
 
   distributable_counter_array() noexcept
   {
-    for (auto &counter : counters_)
-      counter.store(0, std::memory_order_relaxed);
+    // No initialization of atomics here because we're relying on zero
+    // initialization for globals
   }
 
   __attribute__((warn_unused_result)) detail::strong_bumper<Integral>
@@ -226,7 +229,7 @@ public:
   operator[](size_t idx)
   {
     assert(idx < Size);
-    return local()[idx];
+    return broker_[idx];
   }
 
   __attribute__((warn_unused_result)) Integral load(size_t idx)
@@ -239,15 +242,8 @@ public:
   }
 
 private:
-  counter_broker_array<Integral, Size> &local()
-  {
-    // Meyers' singleton ensures that the broker will be initialized on the
-    // first access and thus will not slow down thread creation.
-    thread_local counter_broker_array<Integral, Size> broker(global_);
-    return broker;
-  }
-
   distributable_counter_array<Integral, Size> global_;
+  counter_broker_array<Integral, Size> broker_{global_};
 };
 
 #endif
