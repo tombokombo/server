@@ -3373,7 +3373,45 @@ struct fil_iterator_t {
 	byte*		io_buffer;		/*!< Buffer to use for IO */
 	fil_space_crypt_t *crypt_data;		/*!< Crypt data (if encrypted) */
 	byte*           crypt_io_buffer;        /*!< IO buffer when encrypted */
+	/** Filesystem block size */
+	ulint		block_size;
+
+	/** Page compression level */
+	ulint		page_compression_level;
 };
+
+
+/** InnoDB writes page by page when there is page compressed
+tablespace involved. It does help to save the disk space when
+punch hole is enabled
+@param iter 	Tablespace iterator
+@param block	block to use for IO
+@param offset	offset of the file to be written
+@param writeptr	buffer to be written
+@param n_bytes	number of bytes to be written
+@return DB_SUCCESS */
+static
+dberr_t fil_import_compress_fwrite(const fil_iterator_t &iter,
+				   buf_block_t *block, ulint offset,
+				   byte *const writeptr,
+				   ulint n_bytes)
+{
+  dberr_t err= DB_SUCCESS;
+  IORequest write_request(IORequest::WRITE, &block->page);
+  write_request.set_import_compressed();
+
+  for (ulint j = 0; j < n_bytes && err == DB_SUCCESS;
+       j += srv_page_size)
+  {
+    err = os_file_write(write_request, iter.filepath, iter.file,
+		        writeptr + j, offset + j,
+			(offset == 0
+			 ? srv_page_size
+			 : iter.block_size));
+  }
+
+  return err;
+}
 
 /********************************************************************//**
 TODO: This can be made parallel trivially by chunking up the file and creating
@@ -3462,6 +3500,7 @@ fil_iterate(
 		bool		updated = false;
 		os_offset_t	page_off = offset;
 		ulint		n_pages_read = n_bytes / size;
+		bool		page_compressed= false;
 		block->page.id.set_page_no(ulint(page_off / size));
 
 		for (ulint i = 0; i < n_pages_read;
@@ -3494,9 +3533,8 @@ page_corrupted:
 				goto func_exit;
 			}
 
-			const bool page_compressed
-				= fil_page_is_compressed_encrypted(src)
-				|| fil_page_is_compressed(src);
+			page_compressed= fil_page_is_compressed_encrypted(src)
+					 || fil_page_is_compressed(src);
 
 			if (page_compressed && block->page.zip.data) {
 				goto page_corrupted;
@@ -3621,8 +3659,8 @@ not_encrypted:
 				if (ulint len = fil_page_compress(
 					    src,
 					    page_compress_buf,
-					    0,/* FIXME: compression level */
-					    512,/* FIXME: proper block size */
+					    iter.page_compression_level,
+					    iter.block_size,
 					    encrypted)) {
 					/* FIXME: remove memcpy() */
 					memcpy(src, page_compress_buf, len);
@@ -3653,11 +3691,24 @@ not_encrypted:
 
 		/* A page was updated in the set, write back to disk. */
 		if (updated) {
-			IORequest       write_request(IORequest::WRITE);
 
-			err = os_file_write(write_request,
-					    iter.filepath, iter.file,
-					    writeptr, offset, n_bytes);
+			if (page_compressed && srv_use_trim) {
+				err= fil_import_compress_fwrite(
+					iter, block, offset, writeptr,
+					n_bytes);
+
+				if (err != DB_SUCCESS) {
+					goto normal_write;
+				}
+			} else {
+normal_write:
+				IORequest	write_request(
+						IORequest::WRITE);
+				err = os_file_write(
+					write_request, iter.filepath,
+					iter.file, writeptr, offset,
+					n_bytes);
+			}
 
 			if (err != DB_SUCCESS) {
 				goto func_exit;
@@ -3792,6 +3843,11 @@ fil_tablespace_iterate(
 		iter.filepath = filepath;
 		iter.file_size = file_size;
 		iter.n_io_buffers = n_io_buffers;
+
+		iter.block_size = os_file_get_block_size(file, filepath);
+		iter.page_compression_level =
+			fsp_flags_get_page_compression_level(
+				callback.get_space_flags());
 
 		/* Add an extra page for compressed page scratch area. */
 		void*	io_buffer = ut_malloc_nokey(

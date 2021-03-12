@@ -231,6 +231,9 @@ public:
 
 		/** Use punch hole if available*/
 		PUNCH_HOLE = 256,
+
+		/** Import page compressed tablespace */
+		IMPORT_COMPRESSED = 512
 	};
 
 	/** Default constructor */
@@ -314,6 +317,11 @@ public:
 		return((m_type & DO_NOT_WAKE) == 0);
 	}
 
+	bool is_import_compressed() const
+	{
+		return (m_type & IMPORT_COMPRESSED) == IMPORT_COMPRESSED;
+	}
+
 	/** Clear the punch hole flag */
 	void clear_punch_hole()
 	{
@@ -381,6 +389,11 @@ public:
 		m_fil_node = node;
 	}
 
+	void set_import_compressed()
+	{
+		m_type |= IMPORT_COMPRESSED;
+	}
+
 	/** Compare two requests
 	@reutrn true if the are equal */
 	bool operator==(const IORequest& rhs) const
@@ -442,8 +455,10 @@ public:
 	@param[in]	fh		Open file handle
 	@param[in]	off		Starting offset (SEEK_SET)
 	@param[in]	len		Size of the hole
+	@param[in]	skip_node_check	Skip node punch hole check
 	@return DB_SUCCESS or error code */
-	dberr_t punch_hole(os_file_t fh, os_offset_t off, ulint len);
+	dberr_t punch_hole(os_file_t fh, os_offset_t off, ulint len,
+			   bool skip_node_check=false);
 
 private:
 	/** Page to be written on write operation. */

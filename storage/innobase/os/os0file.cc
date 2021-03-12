@@ -5000,7 +5000,9 @@ os_file_io(
 			    && !type.is_log()
 			    && type.is_write()
 			    && type.punch_hole()) {
-				*err = type.punch_hole(file, offset, n);
+				*err = type.punch_hole(
+					file, offset, n,
+					type.is_import_compressed());
 
 			} else {
 				*err = DB_SUCCESS;
@@ -5624,9 +5626,10 @@ os_file_punch_hole(
 @param[in]	fh		Open file handle
 @param[in]	off		Starting offset (SEEK_SET)
 @param[in]	len		Size of the hole
+@param[in]	skip_node_check	Ignore node punch hole check
 @return DB_SUCCESS or error code */
 dberr_t
-IORequest::punch_hole(os_file_t fh, os_offset_t off, ulint len)
+IORequest::punch_hole(os_file_t fh, os_offset_t off, ulint len, bool skip_node_check)
 {
 	/* In this debugging mode, we act as if punch hole is supported,
 	and then skip any calls to actually punch a hole here.
@@ -5645,7 +5648,7 @@ IORequest::punch_hole(os_file_t fh, os_offset_t off, ulint len)
 
 	/* Check does file system support punching holes for this
 	tablespace. */
-	if (!should_punch_hole() || !srv_use_trim) {
+	if (!skip_node_check && (!should_punch_hole() || !srv_use_trim)) {
 		return DB_IO_NO_PUNCH_HOLE;
 	}
 
