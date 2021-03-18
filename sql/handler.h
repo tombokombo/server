@@ -1534,6 +1534,17 @@ struct handlerton
    int (*set_checkpoint)(handlerton *hton, const XID* xid);
    int (*get_checkpoint)(handlerton *hton, XID* xid);
    /*
+     Check if the version of the table matches the version in the .frm
+    file.  This is mainly used to verify if an alter online table
+    succeded or not during recovery.  Should return 0 if id matches, 1
+    if not.  Engine that does not support online alter table does not
+    have to implement this function.
+
+    Related to handler::discover_check_version().
+   */
+  int (*check_version)(handlerton *hton, const char *path,
+                       LEX_CUSTRING *version);
+   /*
      Optional clauses in the CREATE/ALTER TABLE
    */
    ha_create_table_option *table_options; // table level options
