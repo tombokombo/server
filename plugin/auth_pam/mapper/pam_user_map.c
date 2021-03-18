@@ -40,6 +40,10 @@ and usually end up in /var/log/secure file.
 #include <grp.h>
 #include <pwd.h>
 
+#if defined(HAVE_GETGROUPSBYNAME)
+#include <unistd.h>
+#endif
+
 #ifdef HAVE_PAM_EXT_H
 #include <security/pam_ext.h>
 #endif
@@ -91,16 +95,33 @@ static int populate_user_groups(const char *user, my_gid_t **groups)
   }
 
   ng= GROUP_BUFFER_SIZE;
+#if defined(HAVE_GETGROUPSBYNAME)
+  loc_group[0]= user_group_id;
+  if (getgroupsbyname(user, ng - 1, loc_group + 1) < 0)
+#elif defined(HAVE_GETGROUPLIST)
   if (getgrouplist(user, user_group_id, loc_groups, &ng) < 0)
+#else
+#error missing implementation to retreive groups
+#endif
   {
     /* The rare case when the user is present in more than */
     /* GROUP_BUFFER_SIZE groups.                           */
+#ifdef HAVE_GETGROUPLIST
     loc_groups= (my_gid_t *) malloc(ng * sizeof (my_gid_t));
+#else
+    loc_groups= (my_gid_t *) malloc((getgroupsbyname(user, 0, groups) + 1) *
+                                    sizeof (my_gid_t));
+#endif
 
     if (!loc_groups)
       return 0;
 
+#ifdef HAVE_GETGROUPLIST
     (void) getgrouplist(user, user_group_id, loc_groups, &ng);
+#else
+    (void) getgroupsbyname(user, ng, loc_group);
+    loc_group[ng++]= user_group_id;
+#endif
     *groups= (my_gid_t*)loc_groups;
   }
 
