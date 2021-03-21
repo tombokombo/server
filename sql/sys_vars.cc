@@ -2880,6 +2880,10 @@ static Sys_var_charptr Sys_socket(
        READ_ONLY GLOBAL_VAR(mysqld_unix_port), CMD_LINE(REQUIRED_ARG),
        IN_FS_CHARSET, DEFAULT(0));
 
+static Sys_var_charptr Sys_compat_server_uuid(
+       "server_uuid", "mysql compatibility uuid",
+       READ_ONLY GLOBAL_VAR(mysqld_compat_server_uuid), CMD_LINE(OPT_ARG),
+       IN_FS_CHARSET, DEFAULT(0));
 /* 
   thread_concurrency is a no-op on all platforms since
   MySQL 5.1.  It will be removed in the context of

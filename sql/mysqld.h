@@ -144,6 +144,7 @@ extern my_bool opt_old_style_user_limits, trust_function_creators;
 extern uint opt_crash_binlog_innodb;
 extern const char *shared_memory_base_name;
 extern char *mysqld_unix_port;
+extern char *mysqld_compat_server_uuid;
 extern my_bool opt_enable_shared_memory;
 extern ulong opt_replicate_events_marked_for_skip;
 extern char *default_tz_name;

@@ -609,6 +609,7 @@ char server_version[SERVER_VERSION_LENGTH], *server_version_ptr;
 bool using_custom_server_version= false;
 char *mysqld_unix_port, *opt_mysql_tmpdir;
 ulong thread_handling;
+char *mysqld_compat_server_uuid;
 
 my_bool encrypt_binlog;
 my_bool encrypt_tmp_disk_tables, encrypt_tmp_files;
